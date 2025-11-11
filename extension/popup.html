@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Social Search</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>AI Search</h1>
+      <label class="row">
+        <input type="checkbox" id="enabled" />
+        <span>Enable semantic reranking</span>
+      </label>
+      <label class="column">
+        <span>Backend URL</span>
+        <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
+      </label>
+      <button id="save">Save</button>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

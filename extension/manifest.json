@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "AI Social Search Demo",
+  "version": "0.1.0",
+  "description": "Highlights YouTube results using semantic relevance from a local AI backend.",
+  "permissions": ["scripting", "storage", "activeTab"],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/results*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AI Social Search Demo"
+  }
+}
