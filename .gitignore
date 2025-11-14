@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.github/
 .venv/
 .env
 .DS_Store
