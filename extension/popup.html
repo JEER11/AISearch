@@ -6,18 +6,74 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <main>
-      <h1>AI Search</h1>
-      <label class="row">
-        <input type="checkbox" id="enabled" />
-        <span>Enable semantic reranking</span>
-      </label>
-      <label class="column">
-        <span>Backend URL</span>
-        <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
-      </label>
-      <button id="save">Save</button>
-      <p id="status" role="status"></p>
+    <main class="shell">
+      <section class="card">
+        <header class="card__header">
+          <div>
+            <h1>AI Search</h1>
+            <p class="subtitle">Fine-tune how semantic reranking behaves on YouTube results.</p>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="enabled" />
+            <span class="toggle__label">Enable semantic reranking</span>
+          </label>
+        </header>
+
+        <section class="group">
+          <h2>Connection</h2>
+          <div class="field with-action">
+            <label for="backendUrl">Backend URL</label>
+            <div class="field__row">
+              <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
+              <button type="button" class="ghost" id="test">Test</button>
+            </div>
+            <p class="hint">Point to your Flask endpoint. The test button pings <code>/health</code>.</p>
+          </div>
+        </section>
+
+        <section class="group">
+          <h2>Scoring</h2>
+          <div class="field-grid">
+            <label class="field">
+              <span>Max results to score</span>
+              <input type="number" id="maxItems" min="5" max="50" step="1" />
+              <p class="hint">Higher values take longer but cover more of the page.</p>
+            </label>
+            <label class="field">
+              <span>Minimum match %</span>
+              <input type="number" id="minScore" min="0" max="100" step="1" />
+              <p class="hint">Entries below this won't be highlighted.</p>
+            </label>
+            <label class="field">
+              <span>Image emphasis</span>
+              <select id="imageMode">
+                <option value="balanced">Balanced</option>
+                <option value="boosted">Boost visuals</option>
+                <option value="strict">Only strong visuals</option>
+              </select>
+              <p class="hint">Tilt scoring toward thumbnails with relevant imagery.</p>
+            </label>
+          </div>
+        </section>
+
+        <section class="group">
+          <h2>Display</h2>
+          <label class="toggle">
+            <input type="checkbox" id="enableReorder" />
+            <span class="toggle__label">Reorder search results by AI score</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="showBadges" />
+            <span class="toggle__label">Show AI match badges on each result</span>
+          </label>
+        </section>
+
+        <footer class="actions">
+          <button type="button" class="ghost" id="reset">Reset</button>
+          <button type="button" id="save">Save</button>
+        </footer>
+        <p id="status" role="status"></p>
+      </section>
     </main>
     <script src="popup.js" type="module"></script>
   </body>

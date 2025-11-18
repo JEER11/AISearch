@@ -38,4 +38,5 @@ This project demonstrates how a Chrome extension can call a local Flask API that
 - The demo currently targets YouTube result pages. You can extend the selectors in `extension/content.js` to support other platforms.
 - The backend normalizes embeddings to provide cosine similarities between 0 and 1. Scores are displayed as percentages for readability.
 - Image relevance uses CLIP embeddings fetched from YouTube thumbnails; ensure `requests` and `Pillow` are installed (included in `requirements.txt`).
+- The popup lets you tweak max items, score thresholds, result reordering, badge visibility, and thumbnail emphasis without editing code.
 - Running SentenceTransformer models may require downloading model weights on first launch; allow a few minutes for the initial load and cache.

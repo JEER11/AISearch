@@ -1,11 +1,22 @@
 const RESULT_SELECTOR = "ytd-video-renderer";
 const ATTRIBUTE_ID = "data-ai-semantic-id";
 const HIGHLIGHT_CLASS = "ai-semantic-highlight";
-const MAX_ITEMS = 30;
-const MIN_SCORE = 0.01;
-const IMAGE_MIN = 0.2;
-const IMAGE_STRONG = 0.45;
-const IMAGE_TOP = 0.65;
+const DEFAULT_CONFIG = {
+  maxItems: 30,
+  minScore: 0.01,
+  enableReorder: true,
+  showBadges: true,
+  imageMode: "balanced"
+};
+const STORAGE_DEFAULTS = {
+  enabled: true,
+  backendUrl: "http://127.0.0.1:5000/search",
+  maxItems: DEFAULT_CONFIG.maxItems,
+  minScore: DEFAULT_CONFIG.minScore,
+  enableReorder: DEFAULT_CONFIG.enableReorder,
+  showBadges: DEFAULT_CONFIG.showBadges,
+  imageMode: DEFAULT_CONFIG.imageMode
+};
 const NEGATIVE_KEYWORDS = [
   "lyrics",
   "official video",
@@ -22,14 +33,63 @@ let lastQueryTokens = [];
 let lastPayloadHash = "";
 let observer = null;
 let lastOrderSignature = "";
+let settingsReady = false;
+let config = { ...DEFAULT_CONFIG };
+let imageThresholds = computeImageThresholds(config.imageMode);
 
 init();
 
-function init() {
+async function init() {
   injectStyles();
   observeResults();
-  requestAnalysis();
+  await loadSettings();
+  chrome.storage.onChanged.addListener(handleStorageChanges);
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+  requestAnalysis();
+}
+
+function loadSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(STORAGE_DEFAULTS, (stored) => {
+      applySettings(stored);
+      settingsReady = true;
+      resolve();
+    });
+  });
+}
+
+function handleStorageChanges(changes, area) {
+  if (area !== "sync") {
+    return;
+  }
+  const relevant = {};
+  let hasChange = false;
+  for (const key of ["maxItems", "minScore", "enableReorder", "showBadges", "imageMode"]) {
+    if (Object.prototype.hasOwnProperty.call(changes, key)) {
+      relevant[key] = changes[key].newValue;
+      hasChange = true;
+    }
+  }
+  if (!hasChange) {
+    return;
+  }
+  applySettings(relevant);
+  lastPayloadHash = "";
+  requestAnalysis();
+}
+
+function applySettings(partial) {
+  const candidate = { ...config, ...partial };
+  const maxItems = clamp(Number(candidate.maxItems), 5, 50, DEFAULT_CONFIG.maxItems);
+  const minScore = clamp(Number(candidate.minScore), 0, 1, DEFAULT_CONFIG.minScore);
+  config = {
+    maxItems: Math.round(maxItems),
+    minScore,
+    enableReorder: typeof candidate.enableReorder === "boolean" ? candidate.enableReorder : DEFAULT_CONFIG.enableReorder,
+    showBadges: typeof candidate.showBadges === "boolean" ? candidate.showBadges : DEFAULT_CONFIG.showBadges,
+    imageMode: normalizeImageMode(candidate.imageMode)
+  };
+  imageThresholds = computeImageThresholds(config.imageMode);
 }
 
 function observeResults() {
@@ -57,7 +117,7 @@ function handleRuntimeMessage(message) {
 }
 
 function collectEntries() {
-  const nodes = Array.from(document.querySelectorAll(RESULT_SELECTOR)).slice(0, MAX_ITEMS);
+  const nodes = Array.from(document.querySelectorAll(RESULT_SELECTOR)).slice(0, config.maxItems);
   const query = getQuery();
   if (!query || !nodes.length) {
     return null;
@@ -86,6 +146,9 @@ function collectEntries() {
 }
 
 function requestAnalysis() {
+  if (!settingsReady) {
+    return;
+  }
   const payload = collectEntries();
   if (!payload) {
     return;
@@ -139,7 +202,7 @@ function applySemanticRanking(data) {
 
 function highlightNode(node, entry) {
   const score = entry.score ?? 0;
-  if (score < MIN_SCORE) {
+  if (score < config.minScore) {
     resetNode(node);
     return;
   }
@@ -158,10 +221,17 @@ function highlightNode(node, entry) {
   }
 
   let badge = node.querySelector(".ai-semantic-badge");
+  if (!config.showBadges) {
+    if (badge) {
+      badge.remove();
+    }
+    return;
+  }
+
   if (!badge) {
     badge = document.createElement("span");
     badge.className = "ai-semantic-badge";
-    const titleContainer = node.querySelector("#video-title" );
+    const titleContainer = node.querySelector("#video-title");
     if (titleContainer?.parentElement) {
       titleContainer.parentElement.insertAdjacentElement("afterbegin", badge);
     } else {
@@ -263,12 +333,12 @@ function dimOpacity(score) {
 }
 
 function passesFilters(entry) {
-  if (!entry || typeof entry.score !== "number" || entry.score < MIN_SCORE) {
+  if (!entry || typeof entry.score !== "number" || entry.score < config.minScore) {
     return false;
   }
 
   const imageScore = typeof entry.image_score === "number" ? entry.image_score : null;
-  if (imageScore !== null && imageScore < IMAGE_MIN && entry.score < 0.35) {
+  if (imageScore !== null && imageScore < imageThresholds.min && entry.score < 0.35) {
     return false;
   }
 
@@ -280,7 +350,7 @@ function passesFilters(entry) {
   const combined = `${title} ${description}`;
   const tokenPresent = lastQueryTokens.some((token) => combined.includes(token));
   if (!tokenPresent) {
-    if (imageScore !== null && imageScore >= IMAGE_STRONG) {
+    if (imageScore !== null && imageScore >= imageThresholds.strong) {
       return true;
     }
     return false;
@@ -304,6 +374,9 @@ function tokenize(text) {
 }
 
 function reorderNodes(items) {
+  if (!config.enableReorder) {
+    return;
+  }
   if (!items.length) {
     return;
   }
@@ -352,10 +425,10 @@ function tierFor(item) {
   const score = item.score || 0;
   const imageScore = typeof item.entry.image_score === "number" ? item.entry.image_score : null;
   if (imageScore !== null) {
-    if (imageScore >= IMAGE_TOP) {
+    if (imageScore >= imageThresholds.top) {
       return 7;
     }
-    if (imageScore >= IMAGE_STRONG) {
+    if (imageScore >= imageThresholds.strong) {
       return 6;
     }
   }
@@ -401,4 +474,26 @@ function scoreFormat(value) {
     return "--";
   }
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function computeImageThresholds(mode) {
+  switch (normalizeImageMode(mode)) {
+    case "strict":
+      return { min: 0.35, strong: 0.55, top: 0.75 };
+    case "boosted":
+      return { min: 0.18, strong: 0.4, top: 0.6 };
+    default:
+      return { min: 0.2, strong: 0.45, top: 0.65 };
+  }
+}
+
+function normalizeImageMode(value) {
+  return ["balanced", "boosted", "strict"].includes(value) ? value : DEFAULT_CONFIG.imageMode;
+}
+
+function clamp(value, min, max, fallback) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(value, min), max);
 }

@@ -1,8 +1,17 @@
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:5000/search";
+const DEFAULT_SETTINGS = {
+  backendUrl: DEFAULT_BACKEND_URL,
+  enabled: true,
+  maxItems: 30,
+  minScore: 0.01,
+  enableReorder: true,
+  showBadges: true,
+  imageMode: "balanced"
+};
 
 async function getSettings() {
-  const stored = await chrome.storage.sync.get({ backendUrl: DEFAULT_BACKEND_URL, enabled: true });
-  return stored;
+  const stored = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+  return { ...DEFAULT_SETTINGS, ...stored };
 }
 
 async function handleSemanticRequest(message, sender) {
