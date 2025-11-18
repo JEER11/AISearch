@@ -197,4 +197,7 @@ def normalize_clip_score(value: float) -> float:
 
 
 if __name__ == "__main__":
-  app.run(host="127.0.0.1", port=5000, debug=True)
+  # Run without the reloader so the process stays single-threaded when launched
+  # from the editor/terminal. The development reloader forks which can cause
+  # the parent to exit in some tooling; disabling it keeps the server alive.
+  app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)

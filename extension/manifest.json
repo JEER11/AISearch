@@ -5,7 +5,9 @@
   "description": "Highlights YouTube results using semantic relevance from a local AI backend.",
   "permissions": ["scripting", "storage", "activeTab"],
   "host_permissions": [
-    "https://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background.js",
