@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "AI Social Search Demo",
+  "name": "AISearch",
   "version": "0.1.0",
   "description": "Highlights YouTube results using semantic relevance from a local AI backend.",
   "permissions": ["scripting", "storage", "activeTab"],
@@ -22,6 +22,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AI Social Search Demo"
+    "default_title": "AISearch"
   }
 }
