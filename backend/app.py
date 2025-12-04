@@ -32,11 +32,44 @@ if not USE_FALLBACK:
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+# all-mpnet-base-v2 provides superior semantic understanding with deeper contextual
+# meaning compared to MiniLM. It's slower but much more accurate for NLU tasks.
+MODEL_NAME = "all-mpnet-base-v2"
 CLIP_MODEL_NAME = "clip-ViT-B-32"
-TEXT_WEIGHT = 0.3
-IMAGE_WEIGHT = 0.7
+# Prioritize image matching over text (image gets 65%, text gets 35%)
+TEXT_WEIGHT = float(os.environ.get("AIS_TEXT_WEIGHT", "0.35"))
+IMAGE_WEIGHT = float(os.environ.get("AIS_IMAGE_WEIGHT", "0.65"))
 IMAGE_CACHE_MAX = 128
+
+# Semantic disambiguation: map queries to brand/company keywords (penalize) and fruit/natural keywords (boost)
+BRAND_KEYWORDS = {
+  "apple": [
+    "iphone", "ipad", "macbook", "mac", "ios", "macos", "app store", "tim cook",
+    "steve jobs", "cupertino", "wozniak", "event", "keynote", "airpods", "watch",
+    "airplay", "siri", "icloud", "battery", "charge", "upgrade"
+  ],
+  "orange": [
+    "orange juice", "orange county", "orange is the new black", "theory"
+  ],
+  "cherry": [
+    "cherry picking", "festival"
+  ]
+}
+
+FRUIT_KEYWORDS = {
+  "apple": [
+    "fruit", "orchard", "tree", "picking", "harvest", "recipe", "cooking",
+    "pie", "juice", "cider", "farmer", "garden", "organic", "crisp", "sweet",
+    "health", "nutrition", "vitamin"
+  ],
+  "orange": [
+    "fruit", "citrus", "tree", "orchard", "vitamin c", "juice", "peel",
+    "zest", "sweet", "taste", "recipe", "health"
+  ],
+  "cherry": [
+    "fruit", "tree", "orchard", "picking", "recipe", "pie", "sweet", "tart"
+  ]
+}
 
 # If the heavy models loaded successfully, instantiate them. Otherwise
 # keep None and the code will use a simple fallback scorer.
@@ -157,11 +190,35 @@ def search() -> Any:
     else:
       combined_scores.append((text_score * TEXT_WEIGHT) + (image_score * IMAGE_WEIGHT))
 
+  # Apply semantic disambiguation: penalize brand/company mentions, boost fruit-related keywords
+  adjusted_scores: List[float] = []
+  query_lower = query.lower()
+  
+  for combined, title, description in zip(combined_scores, titles, descriptions):
+    score = combined
+    content_lower = f"{title} {description}".lower()
+    
+    # Penalize brand keywords if query is a multi-meaning word like "apple"
+    if query_lower in BRAND_KEYWORDS:
+      for brand_keyword in BRAND_KEYWORDS[query_lower]:
+        if brand_keyword in content_lower:
+          score *= 0.4  # Cut score to 40% for brand/company mentions
+          break  # Apply penalty once per result
+    
+    # Boost fruit-related keywords
+    if query_lower in FRUIT_KEYWORDS:
+      for fruit_keyword in FRUIT_KEYWORDS[query_lower]:
+        if fruit_keyword in content_lower:
+          score = min(score * 1.4, 1.0)  # Boost by 40%, cap at 1.0
+          break  # Apply boost once per result
+    
+    adjusted_scores.append(score)
+
   ranked = sorted(
     (
       {
         "id": id_value,
-        "score": combined,
+        "score": adjusted,
         "title": title,
         "text": text,
         "description": description,
@@ -169,9 +226,9 @@ def search() -> Any:
         "image_score": image_score,
         "text_score": text_score,
       }
-      for id_value, combined, title, text, description, thumbnail, image_score, text_score in zip(
+      for id_value, adjusted, title, text, description, thumbnail, image_score, text_score in zip(
         ids,
-        combined_scores,
+        adjusted_scores,
         titles,
         texts,
         descriptions,
