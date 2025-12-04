@@ -6,10 +6,28 @@ from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 import requests
-import torch
 from flask import Flask, jsonify, request
 from PIL import Image
-from sentence_transformers import SentenceTransformer, util
+
+import os
+
+# Use a lightweight pure-Python scorer by default so the backend starts
+# quickly for local extension testing. Set environment variable
+# `AIS_ENABLE_ML=1` to attempt loading heavy ML libraries instead.
+USE_FALLBACK = os.environ.get("AIS_ENABLE_ML", "0") != "1"
+SentenceTransformer = None
+util = None
+torch = None
+if not USE_FALLBACK:
+  try:
+    import torch
+    from sentence_transformers import SentenceTransformer, util
+  except Exception as exc:  # pragma: no cover - runtime fallback
+    USE_FALLBACK = True
+    SentenceTransformer = None
+    util = None
+    torch = None
+    logging.warning("ML imports failed, using fallback text scorer: %s", exc)
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +38,13 @@ TEXT_WEIGHT = 0.3
 IMAGE_WEIGHT = 0.7
 IMAGE_CACHE_MAX = 128
 
-model = SentenceTransformer(MODEL_NAME)
-clip_model = SentenceTransformer(CLIP_MODEL_NAME)
+# If the heavy models loaded successfully, instantiate them. Otherwise
+# keep None and the code will use a simple fallback scorer.
+model = None
+clip_model = None
+if not USE_FALLBACK:
+  model = SentenceTransformer(MODEL_NAME)
+  clip_model = SentenceTransformer(CLIP_MODEL_NAME)
 
 
 class ImageEmbeddingCache:
@@ -96,20 +119,36 @@ def search() -> Any:
     response.status_code = 400
     return response
 
-  query_embedding = model.encode(query, convert_to_tensor=True, normalize_embeddings=True)
-  item_embeddings = model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
-  similarities = util.cos_sim(query_embedding, item_embeddings)[0].tolist()
+  # Compute text similarities. Use the sentence-transformers model when
+  # available, otherwise fall back to a lightweight token-overlap scorer.
+  if model is not None and util is not None and torch is not None:
+    query_embedding = model.encode(query, convert_to_tensor=True, normalize_embeddings=True)
+    item_embeddings = model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
+    similarities = util.cos_sim(query_embedding, item_embeddings)[0].tolist()
 
-  clip_query = clip_model.encode(
-    [query],
-    convert_to_tensor=True,
-    normalize_embeddings=True,
-    show_progress_bar=False,
-  )[0]
+    clip_query = clip_model.encode(
+      [query],
+      convert_to_tensor=True,
+      normalize_embeddings=True,
+      show_progress_bar=False,
+    )[0]
 
-  image_scores: List[Optional[float]] = []
-  for thumbnail in thumbnails:
-    image_scores.append(compute_image_score(thumbnail, clip_query))
+    image_scores: List[Optional[float]] = []
+    for thumbnail in thumbnails:
+      image_scores.append(compute_image_score(thumbnail, clip_query))
+  else:
+    # Fallback: simple token-overlap similarity in [0,1]
+    def simple_score(a: str, b: str) -> float:
+      sa = {t for t in a.lower().split() if t}
+      sb = {t for t in b.lower().split() if t}
+      if not sa or not sb:
+        return 0.0
+      inter = sa.intersection(sb)
+      union = sa.union(sb)
+      return float(len(inter)) / float(len(union))
+
+    similarities = [simple_score(query, t) for t in texts]
+    image_scores = [None for _ in thumbnails]
 
   combined_scores: List[float] = []
   for text_score, image_score in zip(similarities, image_scores):
