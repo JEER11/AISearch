@@ -4,11 +4,21 @@
 		{
 			"label": "Run Flask backend",
 			"type": "shell",
-			"command": "\"${workspaceFolder}\\.venv\\Scripts\\python.exe\"",
-			"args": [
-				"backend/app.py"
-			],
-			"isBackground": true
+			"command": "${workspaceFolder}\\run_backend.bat",
+			"isBackground": true,
+			"problemMatcher": {
+				"pattern": {
+					"regexp": "^.*$",
+					"file": 1,
+					"location": 2,
+					"message": 3
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": ".*Running on.*",
+					"endsPattern": ".*Press CTRL\\+C.*"
+				}
+			}
 		}
 	]
 }
