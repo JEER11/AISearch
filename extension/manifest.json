@@ -2,10 +2,11 @@
   "manifest_version": 3,
   "name": "AISearch",
   "version": "0.1.0",
-  "description": "Highlights YouTube results using semantic relevance from a local AI backend.",
+  "description": "Semantic search highlighting for YouTube and Instagram using AI-powered relevance ranking.",
   "permissions": ["scripting", "storage", "activeTab"],
   "host_permissions": [
     "https://www.youtube.com/*",
+    "https://www.instagram.com/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
@@ -17,6 +18,11 @@
     {
       "matches": ["https://www.youtube.com/results*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.instagram.com/explore*"],
+      "js": ["instagram.js"],
       "run_at": "document_idle"
     }
   ],
