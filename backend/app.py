@@ -36,9 +36,9 @@ logging.basicConfig(level=logging.INFO)
 # meaning compared to MiniLM. It's slower but much more accurate for NLU tasks.
 MODEL_NAME = "all-mpnet-base-v2"
 CLIP_MODEL_NAME = "clip-ViT-B-32"
-# Prioritize image matching over text (image gets 65%, text gets 35%)
-TEXT_WEIGHT = float(os.environ.get("AIS_TEXT_WEIGHT", "0.35"))
-IMAGE_WEIGHT = float(os.environ.get("AIS_IMAGE_WEIGHT", "0.65"))
+# Prioritize text semantic understanding (60%) over image (40%) for better accuracy
+TEXT_WEIGHT = float(os.environ.get("AIS_TEXT_WEIGHT", "0.6"))
+IMAGE_WEIGHT = float(os.environ.get("AIS_IMAGE_WEIGHT", "0.4"))
 IMAGE_CACHE_MAX = 128
 
 # Semantic disambiguation: map queries to brand/company keywords (penalize) and fruit/natural keywords (boost)
@@ -46,28 +46,48 @@ BRAND_KEYWORDS = {
   "apple": [
     "iphone", "ipad", "macbook", "mac", "ios", "macos", "app store", "tim cook",
     "steve jobs", "cupertino", "wozniak", "event", "keynote", "airpods", "watch",
-    "airplay", "siri", "icloud", "battery", "charge", "upgrade"
+    "airplay", "siri", "icloud", "battery", "charge", "upgrade", "itunes", "safari",
+    "facetime", "imessage", "apple tv", "airtag", "homepod"
   ],
   "orange": [
-    "orange juice", "orange county", "orange is the new black", "theory"
+    "orange county", "orange is the new black", "theory"
   ],
   "cherry": [
-    "cherry picking", "festival"
+    "cherry picking"
   ]
 }
 
 FRUIT_KEYWORDS = {
   "apple": [
-    "fruit", "orchard", "tree", "picking", "harvest", "recipe", "cooking",
+    "fruit", "orchard", "tree", "picking", "harvest", "recipe", "cooking", "baking",
     "pie", "juice", "cider", "farmer", "garden", "organic", "crisp", "sweet",
-    "health", "nutrition", "vitamin"
+    "health", "nutrition", "vitamin", "fresh", "farm", "grow", "seed", "core",
+    "peel", "slice", "eat", "snack", "fuji", "granny smith", "gala", "honeycrisp"
   ],
   "orange": [
     "fruit", "citrus", "tree", "orchard", "vitamin c", "juice", "peel",
-    "zest", "sweet", "taste", "recipe", "health"
+    "zest", "sweet", "taste", "recipe", "health", "fresh", "segment"
   ],
   "cherry": [
-    "fruit", "tree", "orchard", "picking", "recipe", "pie", "sweet", "tart"
+    "fruit", "tree", "orchard", "picking", "recipe", "pie", "sweet", "tart", "fresh"
+  ]
+}
+
+# Universal music/entertainment keywords to filter out
+MUSIC_KEYWORDS = [
+  "lyrics", "official video", "music video", "audio", "song", "remix", "cover",
+  "vevo", "karaoke", "live performance", "concert", "acoustic", "instrumental",
+  "mv", "official mv", "topic", "feat", "ft.", "album", "single", "track",
+  "playlist", "spotify", "apple music"
+]
+
+# Flower-related keywords for "flowers" query
+FLOWER_KEYWORDS = {
+  "flowers": [
+    "garden", "bouquet", "bloom", "blossom", "petal", "plant", "growing",
+    "florist", "arrangement", "wildflower", "rose", "tulip", "daisy", "lily",
+    "sunflower", "orchid", "care", "planting", "gardening", "seeds", "soil",
+    "water", "nature", "floral", "botanical"
   ]
 }
 
@@ -190,29 +210,50 @@ def search() -> Any:
     else:
       combined_scores.append((text_score * TEXT_WEIGHT) + (image_score * IMAGE_WEIGHT))
 
-  # Apply semantic disambiguation: penalize brand/company mentions, boost fruit-related keywords
+  # Apply semantic disambiguation: aggressive filtering and boosting for accuracy
   adjusted_scores: List[float] = []
   query_lower = query.lower()
   
-  for combined, title, description in zip(combined_scores, titles, descriptions):
+  for combined, title, description, text_score in zip(combined_scores, titles, descriptions, similarities):
     score = combined
     content_lower = f"{title} {description}".lower()
     
-    # Penalize brand keywords if query is a multi-meaning word like "apple"
+    # HARD FILTER: Reject music/entertainment content universally
+    music_penalty_count = sum(1 for kw in MUSIC_KEYWORDS if kw in content_lower)
+    if music_penalty_count >= 2:  # If 2+ music keywords, nearly eliminate
+      score *= 0.05
+    elif music_penalty_count == 1:
+      score *= 0.3
+    
+    # Penalize brand keywords AGGRESSIVELY if query is multi-meaning word
     if query_lower in BRAND_KEYWORDS:
-      for brand_keyword in BRAND_KEYWORDS[query_lower]:
-        if brand_keyword in content_lower:
-          score *= 0.4  # Cut score to 40% for brand/company mentions
-          break  # Apply penalty once per result
+      brand_matches = sum(1 for kw in BRAND_KEYWORDS[query_lower] if kw in content_lower)
+      if brand_matches >= 2:
+        score *= 0.1  # Nearly eliminate if multiple brand keywords
+      elif brand_matches == 1:
+        score *= 0.15  # Heavy penalty for single brand keyword
     
-    # Boost fruit-related keywords
+    # Boost fruit/flower keywords with stacking
+    boost_keywords = []
     if query_lower in FRUIT_KEYWORDS:
-      for fruit_keyword in FRUIT_KEYWORDS[query_lower]:
-        if fruit_keyword in content_lower:
-          score = min(score * 1.4, 1.0)  # Boost by 40%, cap at 1.0
-          break  # Apply boost once per result
+      boost_keywords = FRUIT_KEYWORDS[query_lower]
+    elif query_lower in FLOWER_KEYWORDS:
+      boost_keywords = FLOWER_KEYWORDS[query_lower]
     
-    adjusted_scores.append(score)
+    if boost_keywords:
+      boost_matches = sum(1 for kw in boost_keywords if kw in content_lower)
+      if boost_matches >= 3:
+        score = min(score * 2.5, 1.0)  # Major boost for 3+ matches
+      elif boost_matches == 2:
+        score = min(score * 1.8, 1.0)
+      elif boost_matches == 1:
+        score = min(score * 1.3, 1.0)
+    
+    # Require minimum semantic similarity for text-based results
+    if text_score < 0.15:  # Too low semantic relevance
+      score *= 0.2
+    
+    adjusted_scores.append(max(score, 0.0))
 
   ranked = sorted(
     (
