@@ -185,3 +185,52 @@ code {
   font-size: 11px;
   color: #bae6fd;
 }
+
+.stats-container {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.stats-container p {
+  margin: 0 0 8px 0;
+}
+
+.stats-container strong {
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stat-box {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  text-align: center;
+}
+
+.stat-box__value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #60a5fa;
+  display: block;
+}
+
+.stat-box__label {
+  font-size: 10px;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  display: block;
+}

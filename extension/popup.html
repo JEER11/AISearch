@@ -68,6 +68,35 @@
           </label>
         </section>
 
+        <section class="group">
+          <h2>Filters</h2>
+          <label class="toggle">
+            <input type="checkbox" id="enableMusicFilter" checked />
+            <span class="toggle__label">Filter music/entertainment content</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="enableBrandFilter" checked />
+            <span class="toggle__label">Filter Apple tech/brand for "apple" queries</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="enableIntentBoost" checked />
+            <span class="toggle__label">Boost content matching query intent</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="enableTemporalBoost" checked />
+            <span class="toggle__label">Boost recent/trending content</span>
+          </label>
+        </section>
+
+        <section class="group">
+          <h2>Feedback Stats</h2>
+          <div id="feedbackStats" class="stats-container">
+            <p class="hint">Loading feedback data...</p>
+          </div>
+          <button type="button" class="ghost" id="refreshStats">Refresh Stats</button>
+          <button type="button" class="ghost" id="clearFeedback">Clear Feedback</button>
+        </section>
+
         <footer class="actions">
           <button type="button" class="ghost" id="reset">Reset</button>
           <button type="button" id="save">Save</button>

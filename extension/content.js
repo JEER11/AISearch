@@ -6,7 +6,11 @@ const DEFAULT_CONFIG = {
   minScore: 0.25,
   enableReorder: true,
   showBadges: true,
-  imageMode: "balanced"
+  imageMode: "balanced",
+  enableMusicFilter: true,
+  enableBrandFilter: true,
+  enableIntentBoost: true,
+  enableTemporalBoost: true
 };
 const STORAGE_DEFAULTS = {
   enabled: true,
@@ -15,7 +19,11 @@ const STORAGE_DEFAULTS = {
   minScore: 0.25,
   enableReorder: DEFAULT_CONFIG.enableReorder,
   showBadges: DEFAULT_CONFIG.showBadges,
-  imageMode: DEFAULT_CONFIG.imageMode
+  imageMode: DEFAULT_CONFIG.imageMode,
+  enableMusicFilter: DEFAULT_CONFIG.enableMusicFilter,
+  enableBrandFilter: DEFAULT_CONFIG.enableBrandFilter,
+  enableIntentBoost: DEFAULT_CONFIG.enableIntentBoost,
+  enableTemporalBoost: DEFAULT_CONFIG.enableTemporalBoost
 };
 const NEGATIVE_KEYWORDS = [
   "lyrics",
@@ -158,7 +166,11 @@ function applySettings(partial) {
     minScore,
     enableReorder: typeof candidate.enableReorder === "boolean" ? candidate.enableReorder : DEFAULT_CONFIG.enableReorder,
     showBadges: typeof candidate.showBadges === "boolean" ? candidate.showBadges : DEFAULT_CONFIG.showBadges,
-    imageMode: normalizeImageMode(candidate.imageMode)
+    imageMode: normalizeImageMode(candidate.imageMode),
+    enableMusicFilter: typeof candidate.enableMusicFilter === "boolean" ? candidate.enableMusicFilter : DEFAULT_CONFIG.enableMusicFilter,
+    enableBrandFilter: typeof candidate.enableBrandFilter === "boolean" ? candidate.enableBrandFilter : DEFAULT_CONFIG.enableBrandFilter,
+    enableIntentBoost: typeof candidate.enableIntentBoost === "boolean" ? candidate.enableIntentBoost : DEFAULT_CONFIG.enableIntentBoost,
+    enableTemporalBoost: typeof candidate.enableTemporalBoost === "boolean" ? candidate.enableTemporalBoost : DEFAULT_CONFIG.enableTemporalBoost
   };
   imageThresholds = computeImageThresholds(config.imageMode);
 }

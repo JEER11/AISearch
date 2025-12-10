@@ -3,10 +3,14 @@ const DEFAULT_SETTINGS = {
   backendUrl: DEFAULT_BACKEND_URL,
   enabled: true,
   maxItems: 30,
-  minScore: 0.01,
+  minScore: 0.25,
   enableReorder: true,
   showBadges: true,
-  imageMode: "balanced"
+  imageMode: "balanced",
+  enableMusicFilter: true,
+  enableBrandFilter: true,
+  enableIntentBoost: true,
+  enableTemporalBoost: true
 };
 
 async function getSettings() {
