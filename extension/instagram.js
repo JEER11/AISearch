@@ -3,7 +3,7 @@ const ATTRIBUTE_ID = "data-ai-semantic-id";
 const HIGHLIGHT_CLASS = "ai-semantic-highlight";
 const DEFAULT_CONFIG = {
   maxItems: 30,
-  minScore: 0.15,
+  minScore: 0.25,
   enableReorder: true,
   showBadges: true,
   imageMode: "balanced"
@@ -12,7 +12,7 @@ const STORAGE_DEFAULTS = {
   enabled: true,
   backendUrl: "http://127.0.0.1:5000/search",
   maxItems: DEFAULT_CONFIG.maxItems,
-  minScore: 0.15,
+  minScore: 0.25,
   enableReorder: DEFAULT_CONFIG.enableReorder,
   showBadges: DEFAULT_CONFIG.showBadges,
   imageMode: DEFAULT_CONFIG.imageMode

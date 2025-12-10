@@ -3,7 +3,7 @@ const ATTRIBUTE_ID = "data-ai-semantic-id";
 const HIGHLIGHT_CLASS = "ai-semantic-highlight";
 const DEFAULT_CONFIG = {
   maxItems: 30,
-  minScore: 0.15,
+  minScore: 0.25,
   enableReorder: true,
   showBadges: true,
   imageMode: "balanced"
@@ -12,7 +12,7 @@ const STORAGE_DEFAULTS = {
   enabled: true,
   backendUrl: "http://127.0.0.1:5000/search",
   maxItems: DEFAULT_CONFIG.maxItems,
-  minScore: 0.15,
+  minScore: 0.25,
   enableReorder: DEFAULT_CONFIG.enableReorder,
   showBadges: DEFAULT_CONFIG.showBadges,
   imageMode: DEFAULT_CONFIG.imageMode
@@ -28,6 +28,73 @@ const NEGATIVE_KEYWORDS = [
   "vevo",
   "karaoke"
 ];
+const APPLE_BRAND_KEYWORDS = [
+  "iphone",
+  "ipad",
+  "ipod",
+  "macbook",
+  "macbook pro",
+  "macbook air",
+  "mac mini",
+  "mac studio",
+  "mac pro",
+  "imac",
+  "apple watch",
+  "watch",
+  "airpods",
+  "vision pro",
+  "apple event",
+  "wwdc",
+  "apple silicon",
+  "m1",
+  "m2",
+  "m3",
+  "a17",
+  "a18",
+  "ios",
+  "macos",
+  "unboxing",
+  "review",
+  "stock",
+  "aapl",
+  "earnings",
+  "preorder"
+];
+const APPLE_FRUIT_KEYWORDS = [
+  "fruit",
+  "orchard",
+  "tree",
+  "picking",
+  "harvest",
+  "recipe",
+  "cooking",
+  "baking",
+  "pie",
+  "juice",
+  "cider",
+  "farmer",
+  "garden",
+  "organic",
+  "crisp",
+  "sweet",
+  "nutrition",
+  "vitamin",
+  "farm",
+  "grow",
+  "seed",
+  "core",
+  "peel",
+  "slice",
+  "snack",
+  "fuji",
+  "granny smith",
+  "gala",
+  "honeycrisp",
+  "fruit salad",
+  "caramel apple",
+  "apple fruit",
+  "orchard care"
+];
 
 let lastQueryTokens = [];
 let lastPayloadHash = "";
@@ -36,6 +103,10 @@ let lastOrderSignature = "";
 let settingsReady = false;
 let config = { ...DEFAULT_CONFIG };
 let imageThresholds = computeImageThresholds(config.imageMode);
+
+// Frontend caching: store recent search results to speed up re-searches
+const resultCache = new Map();
+const CACHE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
 init();
 
@@ -103,6 +174,13 @@ function observeResults() {
 function handleRuntimeMessage(message) {
   switch (message?.type) {
     case "semantic-results":
+      // Cache the result using payload hash
+      if (message.hash) {
+        resultCache.set(message.hash, {
+          data: message.data,
+          timestamp: Date.now()
+        });
+      }
       applySemanticRanking(message.data);
       break;
     case "semantic-error":
@@ -128,12 +206,19 @@ function collectEntries() {
       const title = node.querySelector("#video-title")?.textContent?.trim() || "";
       const description = node.querySelector("#description-text")?.textContent?.trim() || "";
       const id = getOrAssignId(node, index);
+      
+      // Extract publication recency signal (e.g., "2 days ago", "1 month ago")
+      // Look in metadata text or metadata elements
+      const metadataEl = node.querySelector("span.style-scope.yt-formatted-string");
+      const metadata = metadataEl?.textContent?.trim() || "";
+      
       return {
         id,
         text: `${title}\n${description}`.trim(),
         title,
         description,
-        thumbnail: getThumbnailUrl(node)
+        thumbnail: getThumbnailUrl(node),
+        metadata // Pass metadata for temporal scoring
       };
     })
     .filter((item) => item.text.length > 0);
@@ -162,9 +247,18 @@ function requestAnalysis() {
   lastPayloadHash = hash;
   lastOrderSignature = "";
 
+  // Check cache first
+  const cacheEntry = resultCache.get(hash);
+  if (cacheEntry && Date.now() - cacheEntry.timestamp < CACHE_EXPIRY_MS) {
+    applySemanticRanking(cacheEntry.data);
+    return;
+  }
+
+  // Cache miss: send to backend
   chrome.runtime.sendMessage({
     type: "semantic-score",
-    payload
+    payload,
+    hash // Pass hash so we can cache the result
   });
 }
 
@@ -245,6 +339,137 @@ function highlightNode(node, entry) {
   } else {
     badge.textContent = `AI match: ${scoreFormat(score)}`;
   }
+
+  // Add score breakdown tooltip on hover
+  addScoreBreakdown(node, entry);
+
+  // Add feedback buttons (thumbs up/down)
+  addFeedbackButtons(node, entry);
+}
+
+function addFeedbackButtons(node, entry) {
+  let feedbackContainer = node.querySelector(".ai-feedback-buttons");
+  if (feedbackContainer) {
+    return; // Already added
+  }
+
+  feedbackContainer = document.createElement("div");
+  feedbackContainer.className = "ai-feedback-buttons";
+  feedbackContainer.style.cssText = `
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 11px;
+  `;
+
+  const thumbsUp = document.createElement("button");
+  thumbsUp.textContent = "👍 Good";
+  thumbsUp.style.cssText = `
+    padding: 2px 4px;
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid #10b981;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  `;
+  thumbsUp.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    logFeedback(entry, "helpful");
+    thumbsUp.style.background = "#10b981";
+    thumbsUp.style.color = "white";
+  };
+
+  const thumbsDown = document.createElement("button");
+  thumbsDown.textContent = "👎 Wrong";
+  thumbsDown.style.cssText = `
+    padding: 2px 4px;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid #ef4444;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+  `;
+  thumbsDown.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    logFeedback(entry, "wrong");
+    thumbsDown.style.background = "#ef4444";
+    thumbsDown.style.color = "white";
+  };
+
+  feedbackContainer.appendChild(thumbsUp);
+  feedbackContainer.appendChild(thumbsDown);
+
+  const badge = node.querySelector(".ai-semantic-badge");
+  if (badge && badge.parentElement) {
+    badge.parentElement.appendChild(feedbackContainer);
+  } else {
+    node.insertAdjacentElement("afterbegin", feedbackContainer);
+  }
+}
+
+function logFeedback(entry, feedbackType) {
+  chrome.runtime.sendMessage({
+    type: "log-feedback",
+    payload: {
+      query: lastQueryTokens.join(" "),
+      resultId: entry.id,
+      title: entry.title,
+      feedback: feedbackType
+    }
+  });
+}
+
+function addScoreBreakdown(node, entry) {
+  let breakdown = node.querySelector(".ai-score-breakdown");
+  if (breakdown) {
+    return; // Already added
+  }
+
+  breakdown = document.createElement("div");
+  breakdown.className = "ai-score-breakdown";
+  breakdown.style.cssText = `
+    display: none;
+    position: absolute;
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    z-index: 10000;
+    border: 1px solid #4b5563;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+
+  const textScore = (entry.text_score ?? entry.score ?? 0);
+  const imageScore = typeof entry.image_score === "number" ? entry.image_score : null;
+  const finalScore = entry.score ?? 0;
+
+  let breakdownText = `Final: ${scoreFormat(finalScore)}\n`;
+  breakdownText += `Text: ${scoreFormat(textScore)}\n`;
+  if (imageScore !== null) {
+    breakdownText += `Image: ${scoreFormat(imageScore)}\n`;
+  }
+  breakdownText += `---\nWeights: 60% text, 40% img`;
+
+  breakdown.textContent = breakdownText;
+  node.style.position = "relative";
+  node.appendChild(breakdown);
+
+  // Show breakdown on hover
+  node.addEventListener("mouseenter", () => {
+    breakdown.style.display = "block";
+    const rect = node.getBoundingClientRect();
+    breakdown.style.top = "-60px";
+    breakdown.style.left = "0";
+  });
+
+  node.addEventListener("mouseleave", () => {
+    breakdown.style.display = "none";
+  });
 }
 
 function resetNode(node) {
@@ -348,6 +573,18 @@ function passesFilters(entry) {
   const title = (entry.title || "").toLowerCase();
   const description = (entry.description || "").toLowerCase();
   const combined = `${title} ${description}`;
+
+  // For ambiguous "apple" queries, require fruit context and reject brand/tech terms
+  if (lastQueryTokens.includes("apple")) {
+    const hasFruit = APPLE_FRUIT_KEYWORDS.some((kw) => combined.includes(kw));
+    const hasBrand = APPLE_BRAND_KEYWORDS.some((kw) => combined.includes(kw));
+    if (!hasFruit) {
+      return false;
+    }
+    if (hasBrand && !hasFruit) {
+      return false;
+    }
+  }
   const tokenPresent = lastQueryTokens.some((token) => combined.includes(token));
   if (!tokenPresent) {
     if (imageScore !== null && imageScore >= imageThresholds.strong) {

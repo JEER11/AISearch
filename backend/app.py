@@ -10,6 +10,8 @@ from flask import Flask, jsonify, request
 from PIL import Image
 
 import os
+import json
+from collections import Counter
 
 # Use a lightweight pure-Python scorer by default so the backend starts
 # quickly for local extension testing. Set environment variable
@@ -18,15 +20,21 @@ USE_FALLBACK = os.environ.get("AIS_ENABLE_ML", "0") != "1"
 SentenceTransformer = None
 util = None
 torch = None
+TfidfVectorizer = None
+LogisticRegression = None
 if not USE_FALLBACK:
   try:
     import torch
     from sentence_transformers import SentenceTransformer, util
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
   except Exception as exc:  # pragma: no cover - runtime fallback
     USE_FALLBACK = True
     SentenceTransformer = None
     util = None
     torch = None
+    TfidfVectorizer = None
+    LogisticRegression = None
     logging.warning("ML imports failed, using fallback text scorer: %s", exc)
 
 app = Flask(__name__)
@@ -35,19 +43,63 @@ logging.basicConfig(level=logging.INFO)
 # all-mpnet-base-v2 provides superior semantic understanding with deeper contextual
 # meaning compared to MiniLM. It's slower but much more accurate for NLU tasks.
 MODEL_NAME = "all-mpnet-base-v2"
+SECONDARY_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 CLIP_MODEL_NAME = "clip-ViT-B-32"
 # Prioritize text semantic understanding (60%) over image (40%) for better accuracy
 TEXT_WEIGHT = float(os.environ.get("AIS_TEXT_WEIGHT", "0.6"))
 IMAGE_WEIGHT = float(os.environ.get("AIS_IMAGE_WEIGHT", "0.4"))
 IMAGE_CACHE_MAX = 128
 
+# Use multi-model ensemble if enabled
+USE_ENSEMBLE = os.environ.get("AIS_USE_ENSEMBLE", "0") == "1"
+ENSEMBLE_WEIGHTS = [0.6, 0.4]  # Weight primary model (all-mpnet) 60%, secondary (MiniLM) 40%
+
+# Query intent classification: detect user intent and adjust weights
+INTENT_KEYWORDS = {
+  "how_to": [
+    "how to", "tutorial", "guide", "step by step", "diy", "learn", "teaching",
+    "instructions", "howto", "tips", "tricks", "process", "method", "technique"
+  ],
+  "review": [
+    "review", "unboxing", "comparison", "vs", "testing", "benchmark", "opinion",
+    "thoughts", "honest review", "hands on", "rating", "verdict"
+  ],
+  "entertainment": [
+    "funny", "comedy", "entertainment", "reaction", "try", "challenge", "prank",
+    "viral", "trending", "music", "song", "dance", "skit"
+  ],
+  "factual": [
+    "facts", "documentary", "explained", "science", "research", "study", "analysis",
+    "data", "statistics", "information", "news", "education", "learning"
+  ]
+}
+
+# Intent weight adjustments: how much to boost different content types
+INTENT_WEIGHTS = {
+  "how_to": 1.3,      # Users searching "how to" want tutorials
+  "review": 1.2,      # Reviews are trusted for product queries
+  "entertainment": 0.7,  # Generally deprioritize entertainment
+  "factual": 1.2      # Factual content is valuable
+}
+
+# Temporal recency keywords: used to detect if content is recent
+RECENCY_KEYWORDS = {
+  "very_recent": ["just now", "hours ago", "today"],
+  "recent": ["yesterday", "days ago", "this week", "week ago"],
+  "somewhat_recent": ["weeks ago", "last month", "month ago"],
+  "old": ["months ago", "years ago", "years"]
+}
+
 # Semantic disambiguation: map queries to brand/company keywords (penalize) and fruit/natural keywords (boost)
 BRAND_KEYWORDS = {
   "apple": [
-    "iphone", "ipad", "macbook", "mac", "ios", "macos", "app store", "tim cook",
-    "steve jobs", "cupertino", "wozniak", "event", "keynote", "airpods", "watch",
-    "airplay", "siri", "icloud", "battery", "charge", "upgrade", "itunes", "safari",
-    "facetime", "imessage", "apple tv", "airtag", "homepod"
+    "iphone", "ipad", "ipod", "macbook", "macbook pro", "macbook air", "mac", "imac",
+    "mac mini", "mac studio", "mac pro", "ios", "ios 17", "ios 18", "macos", "app store",
+    "tim cook", "steve jobs", "cupertino", "wozniak", "event", "keynote", "apple event",
+    "wwdc", "airpods", "airpods pro", "watch", "apple watch", "airplay", "siri", "icloud",
+    "apple silicon", "m1", "m2", "m3", "a17", "a18", "vision pro", "battery", "charge",
+    "upgrade", "itunes", "safari", "facetime", "imessage", "apple tv", "airtag", "homepod",
+    "unboxing", "review", "aapl", "stock", "earnings", "preorder"
   ],
   "orange": [
     "orange county", "orange is the new black", "theory"
@@ -62,7 +114,8 @@ FRUIT_KEYWORDS = {
     "fruit", "orchard", "tree", "picking", "harvest", "recipe", "cooking", "baking",
     "pie", "juice", "cider", "farmer", "garden", "organic", "crisp", "sweet",
     "health", "nutrition", "vitamin", "fresh", "farm", "grow", "seed", "core",
-    "peel", "slice", "eat", "snack", "fuji", "granny smith", "gala", "honeycrisp"
+    "peel", "slice", "eat", "snack", "fuji", "granny smith", "gala", "honeycrisp",
+    "fruit salad", "caramel apple", "apple fruit", "malus", "orchard care"
   ],
   "orange": [
     "fruit", "citrus", "tree", "orchard", "vitamin c", "juice", "peel",
@@ -73,6 +126,36 @@ FRUIT_KEYWORDS = {
   ]
 }
 
+# Topic/entity categories: map keywords to semantic categories for filtering
+TOPIC_CATEGORIES = {
+  "FRUIT": [
+    "fruit", "orchard", "tree", "harvest", "farming", "crop", "agriculture",
+    "berry", "citrus", "tropical", "produce", "plant", "organic", "fresh",
+    "pie", "juice", "recipe", "cooking", "baking", "eat", "snack"
+  ],
+  "TECHNOLOGY": [
+    "tech", "device", "gadget", "smartphone", "computer", "software", "app",
+    "iphone", "macbook", "ipad", "watch", "processor", "chip", "silicon",
+    "review", "unboxing", "keynote", "announcement", "launch", "feature"
+  ],
+  "PERSON": [
+    "steve jobs", "tim cook", "founder", "ceo", "executive", "developer",
+    "artist", "musician", "comedian", "actor", "celebrity", "influencer",
+    "interview", "talk", "discussion", "biography"
+  ],
+  "ENTERTAINMENT": [
+    "funny", "comedy", "entertainment", "reaction", "try", "challenge",
+    "prank", "viral", "music", "song", "dance", "skit", "movie", "show"
+  ]
+}
+
+# Define which categories conflict (can't both be relevant)
+CONFLICTING_CATEGORIES = [
+  ("FRUIT", "TECHNOLOGY"),
+  ("FRUIT", "ENTERTAINMENT"),
+  ("FRUIT", "PERSON")  # Unless person is a farmer
+]
+
 # Universal music/entertainment keywords to filter out
 MUSIC_KEYWORDS = [
   "lyrics", "official video", "music video", "audio", "song", "remix", "cover",
@@ -80,6 +163,14 @@ MUSIC_KEYWORDS = [
   "mv", "official mv", "topic", "feat", "ft.", "album", "single", "track",
   "playlist", "spotify", "apple music"
 ]
+
+# Cross-modal validation: keywords that should match between text and image
+VISUAL_VALIDATION_KEYWORDS = {
+  "apple_fruit": ["apple", "apples", "red apple", "green apple", "fruit"],
+  "apple_tech": ["iphone", "macbook", "ipad", "apple watch", "airpods", "mac", "apple logo"],
+  "flower": ["flower", "flowers", "rose", "tulip", "daisy", "bouquet"],
+  "food": ["food", "cooking", "recipe", "dish", "meal"]
+}
 
 # Flower-related keywords for "flowers" query
 FLOWER_KEYWORDS = {
@@ -91,12 +182,59 @@ FLOWER_KEYWORDS = {
   ]
 }
 
+# Query expansion: for ambiguous queries, generate semantic variants to improve recall
+QUERY_EXPANSIONS = {
+  "apple": [
+    "apple fruit",
+    "apple orchard",
+    "apple recipe",
+    "apple pie",
+    "apple cider",
+    "apple juice",
+    "apple harvest",
+    "apple farming"
+  ],
+  "orange": [
+    "orange fruit",
+    "orange citrus",
+    "orange juice",
+    "orange orchard",
+    "orange recipes"
+  ],
+  "cherry": [
+    "cherry fruit",
+    "cherry tree",
+    "cherry picking",
+    "cherry recipe",
+    "cherry harvest"
+  ],
+  "banana": [
+    "banana fruit",
+    "banana recipe",
+    "banana bread",
+    "banana smoothie"
+  ],
+  "flower": [
+    "flower gardening",
+    "flower arrangements",
+    "flower planting",
+    "flower care",
+    "flower growing"
+  ]
+}
+
 # If the heavy models loaded successfully, instantiate them. Otherwise
 # keep None and the code will use a simple fallback scorer.
 model = None
+secondary_model = None
 clip_model = None
 if not USE_FALLBACK:
   model = SentenceTransformer(MODEL_NAME)
+  if USE_ENSEMBLE:
+    try:
+      secondary_model = SentenceTransformer(SECONDARY_MODEL_NAME)
+    except Exception as e:
+      logging.warning("Failed to load secondary model for ensemble: %s", e)
   clip_model = SentenceTransformer(CLIP_MODEL_NAME)
 
 
@@ -121,6 +259,201 @@ class ImageEmbeddingCache:
 image_cache = ImageEmbeddingCache(IMAGE_CACHE_MAX)
 http = requests.Session()
 
+# Negative keyword classifier (trained from user feedback)
+negative_classifier = None
+negative_vectorizer = None
+learned_negative_keywords: List[str] = []
+
+# Query embedding cache: store recent query embeddings to speed up repeated searches
+class EmbeddingCache:
+  def __init__(self, max_size: int = 256) -> None:
+    self._store: OrderedDict[str, torch.Tensor] = OrderedDict()
+    self._max_size = max_size
+
+  def get(self, key: str) -> Optional[torch.Tensor]:
+    if key in self._store:
+      self._store.move_to_end(key)
+      return self._store[key]
+    return None
+
+  def set(self, key: str, value: torch.Tensor) -> None:
+    if key in self._store:
+      del self._store[key]
+    self._store[key] = value
+    self._store.move_to_end(key)
+    if len(self._store) > self._max_size:
+      self._store.popitem(last=False)
+
+  def clear(self) -> None:
+    self._store.clear()
+
+query_embedding_cache = EmbeddingCache(max_size=256)
+
+
+def detect_query_intent(query: str) -> str:
+  """Detect user's intent from query to adjust scoring."""
+  query_lower = query.lower()
+  
+  # Count keyword matches for each intent
+  intent_scores = {intent: 0 for intent in INTENT_KEYWORDS}
+  for intent, keywords in INTENT_KEYWORDS.items():
+    intent_scores[intent] = sum(1 for kw in keywords if kw in query_lower)
+  
+  # Return the intent with most matches, default to "factual"
+  best_intent = max(intent_scores.items(), key=lambda x: x[1])
+  return best_intent[0] if best_intent[1] > 0 else "factual"
+
+
+def detect_recency(metadata: str) -> float:
+  """Detect content recency from metadata and return boost multiplier."""
+  metadata_lower = metadata.lower()
+  
+  # Check for very recent content (boost heavily)
+  if any(kw in metadata_lower for kw in RECENCY_KEYWORDS.get("very_recent", [])):
+    return 1.5  # 50% boost for content from today/hours ago
+  
+  # Check for recent content (moderate boost)
+  if any(kw in metadata_lower for kw in RECENCY_KEYWORDS.get("recent", [])):
+    return 1.3  # 30% boost for week-old content
+  
+  # Check for somewhat recent (slight boost)
+  if any(kw in metadata_lower for kw in RECENCY_KEYWORDS.get("somewhat_recent", [])):
+    return 1.1  # 10% boost for month-old content
+  
+  # Default: no boost for older content
+  return 1.0
+
+
+def detect_topics(text: str) -> List[str]:
+  """Detect semantic topics/entities in text using keyword matching."""
+  text_lower = text.lower()
+  detected = []
+  
+  for category, keywords in TOPIC_CATEGORIES.items():
+    if any(kw in text_lower for kw in keywords):
+      detected.append(category)
+  
+  return detected
+
+
+def apply_topic_filtering(score: float, content_topics: List[str], query_intent: str) -> float:
+  """Apply hard filtering based on conflicting topics."""
+  if not content_topics:
+    return score
+  
+  # For fruit queries, strongly penalize tech + entertainment combos
+  if query_intent == "factual" and "FRUIT" not in content_topics:
+    if "TECHNOLOGY" in content_topics:
+      return score * 0.01  # 99% penalty for tech when expecting fruit
+    if "ENTERTAINMENT" in content_topics:
+      return score * 0.1   # 90% penalty for entertainment
+  
+  return score
+
+
+def train_negative_classifier(feedback_data: List[Dict[str, Any]]) -> None:
+  """Train classifier on user feedback to identify negative patterns."""
+  global negative_classifier, negative_vectorizer, learned_negative_keywords
+  
+  if USE_FALLBACK or not TfidfVectorizer or not LogisticRegression:
+    return
+  
+  if len(feedback_data) < 10:  # Need minimum data to train
+    return
+  
+  # Extract texts and labels (1 = good, 0 = bad)
+  texts = [item.get('title', '') + ' ' + item.get('description', '') for item in feedback_data]
+  labels = [1 if item.get('feedback') == 'up' else 0 for item in feedback_data]
+  
+  # Balance check: need both positive and negative examples
+  if sum(labels) == 0 or sum(labels) == len(labels):
+    return
+  
+  try:
+    # Train TF-IDF vectorizer and logistic regression
+    negative_vectorizer = TfidfVectorizer(max_features=200, ngram_range=(1, 2), stop_words='english')
+    X = negative_vectorizer.fit_transform(texts)
+    
+    negative_classifier = LogisticRegression(max_iter=500, random_state=42)
+    negative_classifier.fit(X, labels)
+    
+    # Extract top negative keywords (high coefficient for class 0)
+    feature_names = negative_vectorizer.get_feature_names_out()
+    coefs = negative_classifier.coef_[0]
+    negative_indices = coefs.argsort()[:30]  # Top 30 negative indicators
+    learned_negative_keywords = [feature_names[i] for i in negative_indices]
+    
+    logging.info(f"Trained negative classifier on {len(feedback_data)} samples. Top negative keywords: {learned_negative_keywords[:10]}")
+  except Exception as e:
+    logging.warning(f"Failed to train negative classifier: {e}")
+
+
+def predict_negative_score(text: str) -> float:
+  """Predict probability that content is 'bad' based on learned patterns. Returns 0-1."""
+  if not negative_classifier or not negative_vectorizer:
+    return 0.0
+  
+  try:
+    X = negative_vectorizer.transform([text])
+    prob_negative = negative_classifier.predict_proba(X)[0][0]  # Probability of class 0 (bad)
+    return float(prob_negative)
+  except Exception:
+    return 0.0
+
+
+def validate_image_text_consistency(title: str, description: str, image_url: str, query: str) -> float:
+  """
+  Use CLIP to detect when image contradicts text content.
+  Returns penalty multiplier: 1.0 (no penalty) to 0.1 (strong penalty).
+  """
+  if USE_FALLBACK or not clip_model or not image_url:
+    return 1.0
+  
+  query_lower = query.lower()
+  content_text = f"{title} {description}".lower()
+  
+  # Only validate for queries where we have clear visual expectations
+  validation_category = None
+  if "apple" in query_lower:
+    if any(kw in content_text for kw in ["fruit", "nutrition", "healthy", "organic", "orchard"]):
+      validation_category = "apple_fruit"
+    elif any(kw in content_text for kw in ["iphone", "mac", "ios", "tech", "device"]):
+      validation_category = "apple_tech"
+  elif "flower" in query_lower:
+    validation_category = "flower"
+  
+  if not validation_category:
+    return 1.0
+  
+  try:
+    # Get expected visual keywords for this category
+    expected_visuals = VISUAL_VALIDATION_KEYWORDS.get(validation_category, [])
+    
+    # Use CLIP to score image against expected visual concepts
+    clip_scores = []
+    for visual_keyword in expected_visuals[:3]:  # Check top 3 keywords
+      score = compute_image_score(image_url, clip_model.encode([visual_keyword], convert_to_tensor=True)[0])
+      if score is not None:
+        clip_scores.append(score)
+    
+    if not clip_scores:
+      return 1.0
+    
+    avg_visual_match = sum(clip_scores) / len(clip_scores)
+    
+    # If image doesn't match expected visual (< 0.25), apply penalty
+    if avg_visual_match < 0.25:
+      return 0.3  # 70% penalty for visual mismatch
+    elif avg_visual_match < 0.35:
+      return 0.7  # 30% penalty for weak visual match
+    
+    return 1.0  # No penalty, image matches expectations
+    
+  except Exception as e:
+    logging.warning(f"Cross-modal validation failed: {e}")
+    return 1.0  # Don't penalize on errors
+
+
 
 @app.after_request
 def add_cors_headers(response: Any) -> Any:
@@ -136,6 +469,31 @@ def add_cors_headers(response: Any) -> Any:
 @app.get("/health")
 def health() -> Any:
   return jsonify({"status": "ok", "model": MODEL_NAME})
+
+
+@app.route("/feedback", methods=["POST", "OPTIONS"])
+def feedback() -> Any:
+  """Receive user feedback and retrain negative classifier."""
+  if request.method == "OPTIONS":
+    preflight = app.make_response(("", 204))
+    return preflight
+  
+  payload = request.get_json(force=True, silent=True) or {}
+  feedback_data = payload.get("feedback_data") or []
+  
+  if not feedback_data:
+    response = jsonify({"error": "Missing feedback_data"})
+    response.status_code = 400
+    return response
+  
+  # Train classifier on new feedback
+  train_negative_classifier(feedback_data)
+  
+  return jsonify({
+    "status": "ok",
+    "samples": len(feedback_data),
+    "learned_keywords": learned_negative_keywords[:10]
+  })
 
 
 @app.route("/search", methods=["POST", "OPTIONS"])
@@ -157,6 +515,7 @@ def search() -> Any:
   titles = []
   descriptions = []
   thumbnails = []
+  metadata_list = []
   for item in items:
     text = (item.get("text") or "").strip()
     if not text:
@@ -166,29 +525,71 @@ def search() -> Any:
     titles.append(item.get("title") or "")
     descriptions.append(item.get("description") or "")
     thumbnails.append(item.get("thumbnail") or "")
+    metadata_list.append(item.get("metadata") or "")
 
   if not texts:
     response = jsonify({"error": "No valid text items"})
     response.status_code = 400
     return response
 
+  # Query expansion: for ambiguous queries, also score against expanded variants
+  query_lower = query.lower()
+  expansion_queries = [query]
+  if query_lower in QUERY_EXPANSIONS:
+    expansion_queries.extend(QUERY_EXPANSIONS[query_lower])
+
   # Compute text similarities. Use the sentence-transformers model when
   # available, otherwise fall back to a lightweight token-overlap scorer.
   if model is not None and util is not None and torch is not None:
-    query_embedding = model.encode(query, convert_to_tensor=True, normalize_embeddings=True)
-    item_embeddings = model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
-    similarities = util.cos_sim(query_embedding, item_embeddings)[0].tolist()
+    # Encode all query variants with caching to speed up repeated searches
+    query_embeddings = []
+    for q in expansion_queries:
+      cached = query_embedding_cache.get(q)
+      if cached is not None:
+        query_embeddings.append(cached)
+      else:
+        emb = model.encode(q, convert_to_tensor=True, normalize_embeddings=True)
+        query_embedding_cache.set(q, emb)
+        query_embeddings.append(emb)
 
-    clip_query = clip_model.encode(
-      [query],
+    item_embeddings = model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
+    # For each item, find max similarity across all query variants
+    similarities = []
+    for item_emb in item_embeddings:
+      max_sim = max(
+        util.cos_sim(qe, item_emb.unsqueeze(0))[0][0].item()
+        for qe in query_embeddings
+      )
+      similarities.append(max_sim)
+    
+    # Multi-model ensemble: also score with secondary model if available
+    if USE_ENSEMBLE and secondary_model is not None:
+      secondary_embeddings = secondary_model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
+      secondary_similarities = []
+      for item_emb in secondary_embeddings:
+        max_sim = max(
+          util.cos_sim(qe, item_emb.unsqueeze(0))[0][0].item()
+          for qe in query_embeddings  # Use cached embeddings from primary model (close enough)
+        )
+        secondary_similarities.append(max_sim)
+      # Weighted ensemble: 60% primary, 40% secondary
+      similarities = [
+        primary * ENSEMBLE_WEIGHTS[0] + secondary * ENSEMBLE_WEIGHTS[1]
+        for primary, secondary in zip(similarities, secondary_similarities)
+      ]
+    
+    similarities = similarities
+
+    clip_queries = clip_model.encode(
+      expansion_queries,
       convert_to_tensor=True,
       normalize_embeddings=True,
       show_progress_bar=False,
-    )[0]
+    )
 
     image_scores: List[Optional[float]] = []
     for thumbnail in thumbnails:
-      image_scores.append(compute_image_score(thumbnail, clip_query))
+      image_scores.append(compute_image_score_expanded(thumbnail, clip_queries))
   else:
     # Fallback: simple token-overlap similarity in [0,1]
     def simple_score(a: str, b: str) -> float:
@@ -200,7 +601,11 @@ def search() -> Any:
       union = sa.union(sb)
       return float(len(inter)) / float(len(union))
 
-    similarities = [simple_score(query, t) for t in texts]
+    # For fallback, score against all expansion variants and take max
+    similarities = [
+      max(simple_score(q, t) for q in expansion_queries)
+      for t in texts
+    ]
     image_scores = [None for _ in thumbnails]
 
   combined_scores: List[float] = []
@@ -214,9 +619,30 @@ def search() -> Any:
   adjusted_scores: List[float] = []
   query_lower = query.lower()
   
-  for combined, title, description, text_score in zip(combined_scores, titles, descriptions, similarities):
+  # Detect query intent to adjust scoring
+  detected_intent = detect_query_intent(query_lower)
+  intent_weight = INTENT_WEIGHTS.get(detected_intent, 1.0)
+  
+  for combined, title, description, text_score, metadata, thumbnail in zip(combined_scores, titles, descriptions, similarities, metadata_list, thumbnails):
     score = combined
     content_lower = f"{title} {description}".lower()
+    
+    # Apply temporal recency boosting (especially for trending queries)
+    recency_boost = detect_recency(metadata)
+    score *= recency_boost
+    
+    # Detect topics in content and apply hard filtering for conflicts
+    content_topics = detect_topics(content_lower)
+    score = apply_topic_filtering(score, content_topics, detected_intent)
+    
+    # Cross-modal validation: penalize if image contradicts text
+    visual_consistency = validate_image_text_consistency(title, description, thumbnail, query)
+    score *= visual_consistency
+    
+    # Apply learned negative keyword penalty from user feedback
+    negative_prob = predict_negative_score(content_lower)
+    if negative_prob > 0.6:  # High confidence this is bad content
+      score *= (1.0 - negative_prob)  # Penalize proportionally
     
     # HARD FILTER: Reject music/entertainment content universally
     music_penalty_count = sum(1 for kw in MUSIC_KEYWORDS if kw in content_lower)
@@ -225,33 +651,63 @@ def search() -> Any:
     elif music_penalty_count == 1:
       score *= 0.3
     
-    # Penalize brand keywords AGGRESSIVELY if query is multi-meaning word
-    if query_lower in BRAND_KEYWORDS:
-      brand_matches = sum(1 for kw in BRAND_KEYWORDS[query_lower] if kw in content_lower)
-      if brand_matches >= 2:
-        score *= 0.1  # Nearly eliminate if multiple brand keywords
-      elif brand_matches == 1:
-        score *= 0.15  # Heavy penalty for single brand keyword
+    # Apply intent-based weighting
+    # If query intent is "how_to" but content has no tutorial keywords, penalize
+    if detected_intent == "how_to":
+      has_howto = any(kw in content_lower for kw in INTENT_KEYWORDS["how_to"])
+      if has_howto:
+        score *= 1.5  # Strong boost for tutorials when user wants howto
+      else:
+        score *= 0.8  # Slight penalty if not tutorial-like
+    elif detected_intent == "review":
+      has_review = any(kw in content_lower for kw in INTENT_KEYWORDS["review"])
+      if has_review:
+        score *= 1.3
+      else:
+        score *= 0.85
     
-    # Boost fruit/flower keywords with stacking
-    boost_keywords = []
+    # For ambiguous queries like "apple", check if ANY fruit keywords exist
+    # If NO fruit keywords found, assume it's brand content and penalize heavily
     if query_lower in FRUIT_KEYWORDS:
       boost_keywords = FRUIT_KEYWORDS[query_lower]
+      boost_matches = sum(1 for kw in boost_keywords if kw in content_lower)
+      brand_matches = sum(1 for kw in BRAND_KEYWORDS.get(query_lower, []) if kw in content_lower)
+
+      # If NO fruit keywords present, assume it's brand/tech and nuke the score
+      if boost_matches == 0:
+        if brand_matches > 0:
+          score = 0.0  # hard reject brand/tech when no fruit context
+        else:
+          score *= 0.01   # 99% penalty: no fruit keywords at all
+
+      # If brand keywords present even with some fruit, still penalize
+      elif brand_matches >= 2:
+        score *= 0.02  # 98% penalty for multiple brand keywords
+      elif brand_matches == 1:
+        score *= 0.05  # 95% penalty for single brand keyword
+
+      # Strong boost for fruit keywords when present
+      if boost_matches >= 3:
+        score = min(score * 4.0, 1.0)  # Major boost for 3+ matches
+      elif boost_matches == 2:
+        score = min(score * 3.0, 1.0)
+      elif boost_matches == 1:
+        score = min(score * 2.0, 1.0)
+    
+    # Boost flower keywords with stacking
     elif query_lower in FLOWER_KEYWORDS:
       boost_keywords = FLOWER_KEYWORDS[query_lower]
-    
-    if boost_keywords:
       boost_matches = sum(1 for kw in boost_keywords if kw in content_lower)
       if boost_matches >= 3:
-        score = min(score * 2.5, 1.0)  # Major boost for 3+ matches
+        score = min(score * 3.5, 1.0)
       elif boost_matches == 2:
-        score = min(score * 1.8, 1.0)
+        score = min(score * 2.5, 1.0)
       elif boost_matches == 1:
-        score = min(score * 1.3, 1.0)
+        score = min(score * 1.8, 1.0)
     
     # Require minimum semantic similarity for text-based results
-    if text_score < 0.15:  # Too low semantic relevance
-      score *= 0.2
+    if text_score < 0.2:  # Raised from 0.15 - stricter filtering
+      score *= 0.15
     
     adjusted_scores.append(max(score, 0.0))
 
@@ -282,7 +738,7 @@ def search() -> Any:
     reverse=True,
   )
 
-  response = jsonify({"ranked": ranked})
+  response = jsonify({"ranked": ranked, "query_intent": detected_intent})
   return response
 
 
@@ -296,6 +752,21 @@ def compute_image_score(url: str, clip_query: torch.Tensor) -> Optional[float]:
     query_vec = clip_query.unsqueeze(0)
     score = util.cos_sim(query_vec, embedding.unsqueeze(0))[0][0].item()
   return normalize_clip_score(score)
+
+
+def compute_image_score_expanded(url: str, clip_queries: torch.Tensor) -> Optional[float]:
+  """Compute max image score across expanded query variants."""
+  if not url:
+    return None
+  embedding = fetch_image_embedding(url)
+  if embedding is None:
+    return None
+  with torch.no_grad():
+    max_score = max(
+      util.cos_sim(qe.unsqueeze(0), embedding.unsqueeze(0))[0][0].item()
+      for qe in clip_queries
+    )
+  return normalize_clip_score(max_score)
 
 
 def fetch_image_embedding(url: str) -> Optional[torch.Tensor]:
