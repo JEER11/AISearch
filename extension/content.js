@@ -586,15 +586,17 @@ function passesFilters(entry) {
   const description = (entry.description || "").toLowerCase();
   const combined = `${title} ${description}`;
 
-  // For ambiguous "apple" queries, require fruit context and reject brand/tech terms
-  if (lastQueryTokens.includes("apple")) {
+  // For ambiguous "apple" queries, require fruit context unless image is strongly relevant
+  if (config.enableBrandFilter && lastQueryTokens.includes("apple")) {
     const hasFruit = APPLE_FRUIT_KEYWORDS.some((kw) => combined.includes(kw));
     const hasBrand = APPLE_BRAND_KEYWORDS.some((kw) => combined.includes(kw));
-    if (!hasFruit) {
-      return false;
+    const strongImageFruit = imageScore !== null && imageScore >= imageThresholds.strong;
+
+    if (!hasFruit && !strongImageFruit) {
+      return false; // no fruit signals at all
     }
     if (hasBrand && !hasFruit) {
-      return false;
+      return false; // tech/brand present without fruit context
     }
   }
   const tokenPresent = lastQueryTokens.some((token) => combined.includes(token));
@@ -606,6 +608,9 @@ function passesFilters(entry) {
   }
   const negativeFound = NEGATIVE_KEYWORDS.some((keyword) => title.includes(keyword) || description.includes(keyword));
   const tokenInDescription = lastQueryTokens.some((token) => description.includes(token));
+  if (config.enableMusicFilter && negativeFound) {
+    return false; // aggressively filter music/entertainment when enabled
+  }
   if (negativeFound && !tokenInDescription) {
     return false;
   }
