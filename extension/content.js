@@ -586,18 +586,14 @@ function passesFilters(entry) {
   const description = (entry.description || "").toLowerCase();
   const combined = `${title} ${description}`;
 
-  // For ambiguous "apple" queries, require fruit context unless image is strongly relevant
+  // For ambiguous "apple" queries: block tech/brand, allow fruit or neutral content
   if (config.enableBrandFilter && lastQueryTokens.includes("apple")) {
     const hasFruit = APPLE_FRUIT_KEYWORDS.some((kw) => combined.includes(kw));
     const hasBrand = APPLE_BRAND_KEYWORDS.some((kw) => combined.includes(kw));
-    const strongImageFruit = imageScore !== null && imageScore >= imageThresholds.strong;
-
-    if (!hasFruit && !strongImageFruit) {
-      return false; // no fruit signals at all
-    }
     if (hasBrand && !hasFruit) {
       return false; // tech/brand present without fruit context
     }
+    // If not brand, allow even if fruit keywords missing; imageScore still respected above
   }
   const tokenPresent = lastQueryTokens.some((token) => combined.includes(token));
   if (!tokenPresent) {
