@@ -940,6 +940,7 @@ async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
 
 function stopVideoCollection() {
   console.log('[AIS Collection] Stopping collection');
+  console.log('[AIS Collection] Final collected videos:', collectionState.collectedVideos.length);
   
   if (collectionState.scrollInterval) {
     clearInterval(collectionState.scrollInterval);
@@ -951,6 +952,8 @@ function stopVideoCollection() {
   chrome.runtime.sendMessage({
     type: 'collection-complete',
     videos: collectionState.collectedVideos
+  }).catch(err => {
+    console.error('[AIS Collection] Error sending completion message:', err);
   });
 }
 
@@ -1077,11 +1080,20 @@ async function collectVisibleVideos() {
     
   } catch (error) {
     console.error('[AIS Collection] Error matching videos:', error);
-    chrome.runtime.sendMessage({
-      type: 'collection-error',
-      error: error.message
-    }).catch(() => {});
-    stopVideoCollection();
+    console.error('[AIS Collection] Error details:', error.stack);
+    
+    // Don't stop on first error - just log and continue
+    // Only stop if it's a critical error (backend not available)
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      console.error('[AIS Collection] Backend connection failed - stopping');
+      chrome.runtime.sendMessage({
+        type: 'collection-error',
+        error: 'Cannot connect to backend. Make sure it is running on http://127.0.0.1:5000'
+      }).catch(() => {});
+      stopVideoCollection();
+    } else {
+      console.warn('[AIS Collection] Non-fatal error, continuing...');
+    }
   }
 }
 
