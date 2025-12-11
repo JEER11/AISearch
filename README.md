@@ -35,9 +35,9 @@ A Chrome extension that uses AI to improve YouTube search results with two power
    ```powershell
    python backend/app.py
    ```
-   ✅ You should see: `Running on http://127.0.0.1:5000`
+   You should see: `Running on http://127.0.0.1:5000`
 
-   💡 **Keep this window open** while using the extension!
+   **Keep this window open** while using the extension.
 
 ### Step 2: Install Chrome Extension
 
@@ -49,7 +49,7 @@ A Chrome extension that uses AI to improve YouTube search results with two power
 
 4. Select the `extension` folder from this project
 
-5. ✅ You should see "AI Social Search" appear in your extensions
+5. You should see "AI Social Search" appear in your extensions
 
 ### Step 3: Use the Extension
 
@@ -90,14 +90,14 @@ A Chrome extension that uses AI to improve YouTube search results with two power
 
 ## Features
 
-✨ **Smart Reranker**
+ **Smart Reranker**
 - AI-powered semantic search reranking
 - Visual thumbnail matching using CLIP
 - Filters out irrelevant music/entertainment content
 - Smart query intent detection (tutorials, reviews, factual content)
 - Temporal boost for recent/trending videos
 
-🎯 **Tag Collector**
+ **Tag Collector**
 - Auto-scroll through hundreds of YouTube results
 - Match videos by semantic tags
 - Exclude unwanted content with negative tags
