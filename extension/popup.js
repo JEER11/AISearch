@@ -12,7 +12,8 @@ const DEFAULTS = {
   enableTemporalBoost: true,
   // Collector mode defaults
   collectorMinScore: 25,
-  collectorMaxVideos: 50
+  collectorMaxVideos: 50,
+  negativeTags: ""
 };
 
 // UI Mode State
@@ -35,6 +36,7 @@ const elements = {
   // Collector elements
   tagChips: document.querySelectorAll(".tag-chip"),
   customTags: document.getElementById("customTags"),
+  negativeTags: document.getElementById("negativeTags"),
   collectorMinScore: document.getElementById("collectorMinScore"),
   collectorMaxVideos: document.getElementById("collectorMaxVideos"),
   startCollection: document.getElementById("startCollection"),
@@ -160,6 +162,10 @@ async function startCollection() {
   const minScore = parseInt(elements.collectorMinScore.value);
   const maxVideos = parseInt(elements.collectorMaxVideos.value);
   
+  // Get negative tags
+  const negativeTagsInput = elements.negativeTags.value.trim();
+  const negativeTags = negativeTagsInput ? negativeTagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
+  
   isCollecting = true;
   collectedVideos = [];
   
@@ -185,6 +191,7 @@ async function startCollection() {
     await chrome.tabs.sendMessage(tab.id, {
       type: 'start-collection',
       tags: tags,
+      negativeTags: negativeTags,
       minScore: minScore,
       maxVideos: maxVideos,
       backendUrl: elements.backendUrl.value
@@ -341,6 +348,9 @@ function collectPayload() {
   const enableBrandFilter = elements.enableBrandFilter.checked;
   const enableIntentBoost = elements.enableIntentBoost.checked;
   const enableTemporalBoost = elements.enableTemporalBoost.checked;
+  
+  // Collector settings
+  const negativeTags = elements.negativeTags.value.trim();
 
   return { 
     backendUrl, 
@@ -353,7 +363,8 @@ function collectPayload() {
     enableMusicFilter,
     enableBrandFilter,
     enableIntentBoost,
-    enableTemporalBoost
+    enableTemporalBoost,
+    negativeTags
   };
 }
 
@@ -369,6 +380,9 @@ function applySettingsToUi(settings) {
   elements.enableBrandFilter.checked = Boolean(settings.enableBrandFilter ?? DEFAULTS.enableBrandFilter);
   elements.enableIntentBoost.checked = Boolean(settings.enableIntentBoost ?? DEFAULTS.enableIntentBoost);
   elements.enableTemporalBoost.checked = Boolean(settings.enableTemporalBoost ?? DEFAULTS.enableTemporalBoost);
+  
+  // Collector settings
+  elements.negativeTags.value = settings.negativeTags || "";
 }
 
 function resetSettings() {

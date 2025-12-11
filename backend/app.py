@@ -492,6 +492,7 @@ def match_tags() -> Any:
   tags = payload.get("tags", [])
   videos = payload.get("videos", [])
   min_score = payload.get("minScore", 70) / 100.0  # Convert percentage to 0-1
+  negative_tags = payload.get("negativeTags", [])  # Get negative tags filter
   
   if not tags or not videos:
     response = jsonify({"error": "Missing tags or videos"})
@@ -499,6 +500,8 @@ def match_tags() -> Any:
     return response
   
   logging.info(f"Matching {len(videos)} videos against tags: {tags}")
+  if negative_tags:
+    logging.info(f"Filtering out videos containing: {negative_tags}")
   
   matches = []
   
@@ -520,6 +523,18 @@ def match_tags() -> Any:
       # Skip if no text
       if not video_text.strip():
         continue
+      
+      # Filter out videos containing negative tags (user-specified exclusions)
+      if negative_tags:
+        skip_video = False
+        for neg_tag in negative_tags:
+          neg_tag_lower = neg_tag.lower().strip()
+          if neg_tag_lower and neg_tag_lower in video_text:
+            logging.debug(f"Skipping video due to negative tag '{neg_tag}': {title}")
+            skip_video = True
+            break
+        if skip_video:
+          continue
       
       # Filter out religious/sermon content when searching for nature/creative tags
       religious_keywords = ['pastor', 'sermon', 'church', 'ministry', 'gospel', 'prayer', 'worship', 'biblical', 'scripture', 'faith', 'blessed', 'preaching']
