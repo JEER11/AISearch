@@ -156,12 +156,18 @@ CONFLICTING_CATEGORIES = [
   ("FRUIT", "PERSON")  # Unless person is a farmer
 ]
 
-# Universal music/entertainment keywords to filter out
+# Universal music/entertainment keywords to filter out - EXPANDED to catch all variations
 MUSIC_KEYWORDS = [
-  "lyrics", "official video", "music video", "audio", "song", "remix", "cover",
+  "lyrics", "lyric", "official video", "music video", "audio", "song", "remix", "cover",
   "vevo", "karaoke", "live performance", "concert", "acoustic", "instrumental",
   "mv", "official mv", "topic", "feat", "ft.", "album", "single", "track",
-  "playlist", "spotify", "apple music"
+  "playlist", "spotify", "apple music", "lyric video", "lyrics video", "official lyric",
+  "clean version", "clean -", "explicit", "male version", "female version", "cover nation",
+  "trending tracks", "music", "singer", "artist", "band", "performance", "live",
+  "official audio", "visualizer", "music visualizer", "letra", "legendado", "tradução",
+  "reaction", "reacts to", "first time hearing", "breakdown", "analysis music",
+  "music review", "vocal coach", "samantha ebert", "lauren spencer smith", "miley cyrus",
+  "donzell taggart", "sing king", "karaoke version", "instrumental version"
 ]
 
 # Cross-modal validation: keywords that should match between text and image
@@ -178,7 +184,11 @@ FLOWER_KEYWORDS = {
     "garden", "bouquet", "bloom", "blossom", "petal", "plant", "growing",
     "florist", "arrangement", "wildflower", "rose", "tulip", "daisy", "lily",
     "sunflower", "orchid", "care", "planting", "gardening", "seeds", "soil",
-    "water", "nature", "floral", "botanical"
+    "water", "nature", "floral", "botanical", "crochet", "knitting", "craft",
+    "diy", "tutorial", "how to make", "handmade", "origami", "paper flowers",
+    "fabric flowers", "felt", "beading", "art", "painting", "drawing", "photography",
+    "landscaping", "perennial", "annual", "fertilizer", "pruning", "cutting",
+    "greenhouse", "flower bed", "wedding flowers", "dried flowers"
   ]
 }
 
@@ -504,6 +514,7 @@ def search() -> Any:
   payload = request.get_json(force=True, silent=True) or {}
   query = (payload.get("query") or "").strip()
   items: List[Dict[str, Any]] = payload.get("items") or []
+  feedback_history = payload.get("feedback") or {"positive": [], "negative": []}
 
   if not query or not items:
     response = jsonify({"error": "Missing query or items"})
@@ -565,11 +576,16 @@ def search() -> Any:
     # Multi-model ensemble: also score with secondary model if available
     if USE_ENSEMBLE and secondary_model is not None:
       secondary_embeddings = secondary_model.encode(texts, convert_to_tensor=True, normalize_embeddings=True)
+      # Encode queries with secondary model (must match dimensions)
+      secondary_query_embeddings = [
+        secondary_model.encode(q, convert_to_tensor=True, normalize_embeddings=True)
+        for q in expansion_queries
+      ]
       secondary_similarities = []
       for item_emb in secondary_embeddings:
         max_sim = max(
           util.cos_sim(qe, item_emb.unsqueeze(0))[0][0].item()
-          for qe in query_embeddings  # Use cached embeddings from primary model (close enough)
+          for qe in secondary_query_embeddings  # Use secondary model embeddings
         )
         secondary_similarities.append(max_sim)
       # Weighted ensemble: 60% primary, 40% secondary
@@ -644,12 +660,59 @@ def search() -> Any:
     if negative_prob > 0.6:  # High confidence this is bad content
       score *= (1.0 - negative_prob)  # Penalize proportionally
     
-    # HARD FILTER: Reject music/entertainment content universally
+    # Similarity-based feedback learning: compare to historical feedback
+    if feedback_history and model is not None and util is not None:
+      current_text = f"{title} {description}"
+      
+      # Compare to negative feedback (thumbs down)
+      negative_items = feedback_history.get("negative", [])
+      if negative_items:
+        max_negative_sim = 0.0
+        for neg_item in negative_items[:20]:  # Limit to recent 20
+          neg_text = f"{neg_item.get('title', '')} {neg_item.get('description', '')}"
+          if neg_text.strip():
+            neg_emb = model.encode(neg_text, convert_to_tensor=True, normalize_embeddings=True)
+            curr_emb = model.encode(current_text, convert_to_tensor=True, normalize_embeddings=True)
+            sim = util.cos_sim(neg_emb.unsqueeze(0), curr_emb.unsqueeze(0))[0][0].item()
+            max_negative_sim = max(max_negative_sim, sim)
+        
+        # If very similar to thumbs-down content (>0.75), heavily penalize
+        if max_negative_sim > 0.75:
+          score *= 0.1  # 90% penalty for very similar to disliked content
+        elif max_negative_sim > 0.6:
+          score *= 0.4  # 60% penalty for moderately similar
+        elif max_negative_sim > 0.45:
+          score *= 0.7  # 30% penalty for somewhat similar
+      
+      # Compare to positive feedback (thumbs up)
+      positive_items = feedback_history.get("positive", [])
+      if positive_items:
+        max_positive_sim = 0.0
+        for pos_item in positive_items[:20]:  # Limit to recent 20
+          pos_text = f"{pos_item.get('title', '')} {pos_item.get('description', '')}"
+          if pos_text.strip():
+            pos_emb = model.encode(pos_text, convert_to_tensor=True, normalize_embeddings=True)
+            curr_emb = model.encode(current_text, convert_to_tensor=True, normalize_embeddings=True)
+            sim = util.cos_sim(pos_emb.unsqueeze(0), curr_emb.unsqueeze(0))[0][0].item()
+            max_positive_sim = max(max_positive_sim, sim)
+        
+        # If very similar to thumbs-up content (>0.75), strongly boost
+        if max_positive_sim > 0.75:
+          score = min(score * 2.5, 1.0)  # 150% boost for very similar to liked content
+        elif max_positive_sim > 0.6:
+          score = min(score * 1.8, 1.0)  # 80% boost for moderately similar
+        elif max_positive_sim > 0.45:
+          score = min(score * 1.3, 1.0)  # 30% boost for somewhat similar
+    
+    # HARD FILTER: Completely eliminate music/entertainment content for non-music queries
+    is_music_query = any(kw in query_lower for kw in ["song", "music", "singer", "band", "album", "lyrics"])
     music_penalty_count = sum(1 for kw in MUSIC_KEYWORDS if kw in content_lower)
-    if music_penalty_count >= 2:  # If 2+ music keywords, nearly eliminate
-      score *= 0.05
-    elif music_penalty_count == 1:
-      score *= 0.3
+    music_penalty_applied = False
+    
+    if not is_music_query:  # Only penalize music if query isn't music-related
+      if music_penalty_count >= 1:  # ANY music keyword = complete elimination
+        score = 0.0  # Completely remove music videos
+        music_penalty_applied = True
     
     # Apply intent-based weighting
     # If query intent is "how_to" but content has no tutorial keywords, penalize
@@ -694,11 +757,21 @@ def search() -> Any:
       elif boost_matches == 1:
         score = min(score * 2.0, 1.0)
     
-    # Boost flower keywords with stacking
+    # Boost flower keywords with stacking - prioritize craft/DIY/gardening content
+    # Don't apply "no keywords" penalty if music penalty already applied (avoid double-penalty)
     elif query_lower in FLOWER_KEYWORDS:
       boost_keywords = FLOWER_KEYWORDS[query_lower]
       boost_matches = sum(1 for kw in boost_keywords if kw in content_lower)
-      if boost_matches >= 3:
+      
+      # If NO flower keywords at all AND not already music-penalized, penalize
+      if boost_matches == 0 and not music_penalty_applied:
+        score *= 0.1  # 90% penalty (less aggressive than before)
+      # Strong progressive boost for flower content
+      elif boost_matches >= 5:
+        score = min(score * 6.0, 1.0)  # Massive boost for 5+ matches (detailed craft/gardening)
+      elif boost_matches == 4:
+        score = min(score * 4.5, 1.0)
+      elif boost_matches == 3:
         score = min(score * 3.5, 1.0)
       elif boost_matches == 2:
         score = min(score * 2.5, 1.0)

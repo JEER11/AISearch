@@ -111,50 +111,110 @@ let lastOrderSignature = "";
 let settingsReady = false;
 let config = { ...DEFAULT_CONFIG };
 let imageThresholds = computeImageThresholds(config.imageMode);
+let wrongBlacklist = {};
 
 // Frontend caching: store recent search results to speed up re-searches
 const resultCache = new Map();
 const CACHE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
-init();
+function safeSendMessage(message) {
+  if (!chrome?.runtime?.id) {
+    return;
+  }
+  try {
+    const promise = chrome.runtime.sendMessage(message);
+    if (promise && typeof promise.catch === 'function') {
+      promise.catch(() => {});
+    }
+  } catch (e) {
+    // Silently ignore if extension context is gone
+  }
+}
+
+// Global error handler to suppress extension context errors from old script instances
+window.addEventListener('error', (event) => {
+  if (event.message && event.message.includes('Extension context invalidated')) {
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason && String(event.reason).includes('Extension context invalidated')) {
+    event.preventDefault();
+    return true;
+  }
+});
+
+// Only run if runtime is available
+if (chrome?.runtime?.id) {
+  init().catch(() => {});
+}
 
 async function init() {
-  injectStyles();
-  observeResults();
-  await loadSettings();
-  chrome.storage.onChanged.addListener(handleStorageChanges);
-  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
-  requestAnalysis();
+  console.log("[AIS] Content script starting on", window.location.href);
+  
+  if (!chrome?.runtime?.id) {
+    return;
+  }
+  
+  try {
+    injectStyles();
+    observeResults();
+    await loadSettings();
+    await loadBlacklist();
+    
+    if (chrome?.runtime?.id) {
+      chrome.storage.onChanged.addListener(handleStorageChanges);
+      chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+      console.log("[AIS] Initialized successfully");
+      requestAnalysis();
+    }
+  } catch (error) {
+    // Silently fail
+  }
 }
 
 function loadSettings() {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(STORAGE_DEFAULTS, (stored) => {
-      applySettings(stored);
-      settingsReady = true;
+    if (!chrome?.runtime?.id) {
       resolve();
-    });
+      return;
+    }
+    try {
+      chrome.storage.sync.get(STORAGE_DEFAULTS, (stored) => {
+        applySettings(stored);
+        settingsReady = true;
+        console.log("[AIS] Settings loaded:", config);
+        resolve();
+      });
+    } catch (e) {
+      resolve();
+    }
   });
 }
 
 function handleStorageChanges(changes, area) {
-  if (area !== "sync") {
-    return;
-  }
-  const relevant = {};
-  let hasChange = false;
-  for (const key of ["maxItems", "minScore", "enableReorder", "showBadges", "imageMode"]) {
-    if (Object.prototype.hasOwnProperty.call(changes, key)) {
-      relevant[key] = changes[key].newValue;
-      hasChange = true;
+  if (area === "sync") {
+    const relevant = {};
+    let hasChange = false;
+    for (const key of ["maxItems", "minScore", "enableReorder", "showBadges", "imageMode"]) {
+      if (Object.prototype.hasOwnProperty.call(changes, key)) {
+        relevant[key] = changes[key].newValue;
+        hasChange = true;
+      }
+    }
+    if (hasChange) {
+      applySettings(relevant);
+      lastPayloadHash = "";
+      requestAnalysis();
     }
   }
-  if (!hasChange) {
-    return;
+
+  if (area === "local" && changes.search_feedback) {
+    loadBlacklist();
   }
-  applySettings(relevant);
-  lastPayloadHash = "";
-  requestAnalysis();
 }
 
 function applySettings(partial) {
@@ -176,11 +236,23 @@ function applySettings(partial) {
 }
 
 function observeResults() {
-  if (observer) {
-    observer.disconnect();
+  if (!chrome?.runtime?.id || !document?.body) {
+    return;
   }
-  observer = new MutationObserver(() => requestAnalysis());
-  observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    if (observer) {
+      observer.disconnect();
+    }
+    observer = new MutationObserver(() => {
+      if (chrome?.runtime?.id) {
+        requestAnalysis();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    console.log("[AIS] Mutation observer attached");
+  } catch (e) {
+    // Fail silently
+  }
 }
 
 function handleRuntimeMessage(message) {
@@ -192,6 +264,11 @@ function handleRuntimeMessage(message) {
           data: message.data,
           timestamp: Date.now()
         });
+      }
+      console.log("[AIS] Received", message.data?.ranked?.length || 0, "results");
+      if (message.data?.ranked?.length > 0) {
+        const scores = message.data.ranked.map(r => r.score?.toFixed(3) || 0);
+        console.log("[AIS] Score range:", Math.max(...scores).toFixed(3), "to", Math.min(...scores).toFixed(3));
       }
       applySemanticRanking(message.data);
       break;
@@ -212,6 +289,7 @@ function collectEntries() {
   if (!query || !nodes.length) {
     return null;
   }
+  const queryKey = query.toLowerCase();
 
   const items = nodes
     .map((node, index) => {
@@ -233,7 +311,8 @@ function collectEntries() {
         metadata // Pass metadata for temporal scoring
       };
     })
-    .filter((item) => item.text.length > 0);
+    .filter((item) => item.text.length > 0)
+    .filter((item) => !isBlacklisted(queryKey, item.title));
 
   if (!items.length) {
     return null;
@@ -246,6 +325,7 @@ function requestAnalysis() {
   if (!settingsReady) {
     return;
   }
+  
   const payload = collectEntries();
   if (!payload) {
     return;
@@ -262,15 +342,17 @@ function requestAnalysis() {
   // Check cache first
   const cacheEntry = resultCache.get(hash);
   if (cacheEntry && Date.now() - cacheEntry.timestamp < CACHE_EXPIRY_MS) {
+    console.log("[AIS] Using cached results for", payload.query);
     applySemanticRanking(cacheEntry.data);
     return;
   }
 
   // Cache miss: send to backend
-  chrome.runtime.sendMessage({
+  console.log("[AIS] Sending", payload.items.length, "items for query:", payload.query);
+  safeSendMessage({
     type: "semantic-score",
     payload,
-    hash // Pass hash so we can cache the result
+    hash
   });
 }
 
@@ -303,6 +385,9 @@ function applySemanticRanking(data) {
     };
   });
 
+  const passing = decorated.filter(d => d.passes).length;
+  console.log(`[AIS] ${passing} of ${decorated.length} videos passed filters (minScore: ${config.minScore})`);
+  
   reorderNodes(decorated);
 }
 
@@ -422,12 +507,13 @@ function addFeedbackButtons(node, entry) {
 }
 
 function logFeedback(entry, feedbackType) {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     type: "log-feedback",
     payload: {
       query: lastQueryTokens.join(" "),
       resultId: entry.id,
       title: entry.title,
+      description: entry.description || "",
       feedback: feedbackType
     }
   });
@@ -584,7 +670,8 @@ function passesFilters(entry) {
   }
   const title = (entry.title || "").toLowerCase();
   const description = (entry.description || "").toLowerCase();
-  const combined = `${title} ${description}`;
+  const hashtags = extractHashtags(`${title} ${description}`).join(" ");
+  const combined = `${title} ${description} ${hashtags}`;
 
   // For ambiguous "apple" queries: block tech/brand, allow fruit or neutral content
   if (config.enableBrandFilter && lastQueryTokens.includes("apple")) {
@@ -602,15 +689,49 @@ function passesFilters(entry) {
     }
     return false;
   }
-  const negativeFound = NEGATIVE_KEYWORDS.some((keyword) => title.includes(keyword) || description.includes(keyword));
-  const tokenInDescription = lastQueryTokens.some((token) => description.includes(token));
-  if (config.enableMusicFilter && negativeFound) {
-    return false; // aggressively filter music/entertainment when enabled
-  }
-  if (negativeFound && !tokenInDescription) {
+  
+  // Backend already handles music filtering, flower/apple disambiguation, and feedback-based learning
+  // Just check if blacklisted by user feedback
+  if (isBlacklisted(entry.title || "", lastQueryTokens.join(" "))) {
     return false;
   }
+  
   return true;
+}
+
+function extractHashtags(text) {
+  if (!text) return [];
+  return text
+    .split(/\s+/u)
+    .filter((token) => token.startsWith("#"))
+    .map((tag) => tag.replace(/^#+/u, "").toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeTitle(title = "") {
+  return title.toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+function isBlacklisted(queryKey, title) {
+  if (!queryKey || !title) return false;
+  const titles = wrongBlacklist[queryKey];
+  if (!titles || !titles.length) return false;
+  return titles.includes(normalizeTitle(title));
+}
+
+async function loadBlacklist() {
+  if (!chrome?.runtime?.id) {
+    return;
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "get-blacklist" });
+    if (response && !response.error) {
+      wrongBlacklist = response;
+      console.log("[AIS] Blacklist loaded:", Object.keys(wrongBlacklist).length, "queries");
+    }
+  } catch (error) {
+    // Silently fail if context invalidated
+  }
 }
 
 function tokenize(text) {
@@ -625,6 +746,7 @@ function tokenize(text) {
 
 function reorderNodes(items) {
   if (!config.enableReorder) {
+    console.log("[AIS] Reordering disabled");
     return;
   }
   if (!items.length) {
@@ -654,6 +776,14 @@ function reorderNodes(items) {
   }
 
   lastOrderSignature = newSignature;
+  
+  console.log(`[AIS] REORDERING: Moving ${sorted.filter(s => s.passes).length} passing videos to top`);
+  const topScores = sorted.slice(0, 5).map(s => ({
+    title: s.entry?.title?.substring(0, 40) || "unknown",
+    score: s.score?.toFixed(3) || "0",
+    passes: s.passes
+  }));
+  console.log("[AIS] Top 5 after reorder:", topScores);
 
   sorted.forEach((item, index) => {
     const targetIndex = index;

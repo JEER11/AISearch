@@ -2,8 +2,8 @@ const DEFAULT_BACKEND_URL = "http://127.0.0.1:5000/search";
 const DEFAULT_SETTINGS = {
   backendUrl: DEFAULT_BACKEND_URL,
   enabled: true,
-  maxItems: 30,
-  minScore: 0.25,
+  maxItems: 100,  // Analyze many more videos to find good content further down
+  minScore: 0.0,  // Show everything - let user see what gets scored
   enableReorder: true,
   showBadges: true,
   imageMode: "balanced",
@@ -32,10 +32,13 @@ async function handleSemanticRequest(message, sender) {
   }
 
   try {
+    // Include feedback history for similarity-based learning
+    const feedbackHistory = await getFeedbackHistory();
+    
     const response = await fetch(backendUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, items })
+      body: JSON.stringify({ query, items, feedback: feedbackHistory })
     });
 
     if (!response.ok) {
@@ -79,6 +82,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     case "get-feedback-stats":
       getSearchFeedbackStats().then(sendResponse).catch((error) => sendResponse({ error: error.message }));
+      return true;
+    case "get-blacklist":
+      getWrongBlacklist().then(sendResponse).catch((error) => sendResponse({ error: error.message }));
+      return true;
+    case "get-feedback":
+      getFeedbackHistory().then(sendResponse).catch((error) => sendResponse({ error: error.message }));
       return true;
     default:
       return undefined;
@@ -138,6 +147,63 @@ async function getSearchFeedbackStats() {
   });
 
   return stats;
+}
+
+/**
+ * Build a blacklist of titles the user marked as wrong, grouped by query.
+ * Content scripts use this to hide items the user rejected from future rankings.
+ */
+async function getWrongBlacklist() {
+  const feedbackKey = "search_feedback";
+  const stored = await chrome.storage.local.get(feedbackKey);
+  const feedbackLog = stored[feedbackKey] || [];
+
+  const blacklist = {};
+  for (const entry of feedbackLog) {
+    if (entry.feedback !== "wrong" || !entry.title) continue;
+    const q = (entry.query || "").toLowerCase();
+    if (!q) continue;
+    if (!blacklist[q]) blacklist[q] = new Set();
+    blacklist[q].add(normalizeTitle(entry.title));
+  }
+
+  const serialized = {};
+  for (const [query, titles] of Object.entries(blacklist)) {
+    serialized[query] = Array.from(titles);
+  }
+  return serialized;
+}
+
+function normalizeTitle(title = "") {
+  return title.toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+/**
+ * Get positive/negative feedback history for similarity-based learning
+ */
+async function getFeedbackHistory() {
+  const feedbackKey = "search_feedback";
+  const stored = await chrome.storage.local.get(feedbackKey);
+  const feedbackLog = stored[feedbackKey] || [];
+  
+  const positive = [];
+  const negative = [];
+  
+  for (const entry of feedbackLog) {
+    const item = {
+      title: entry.title || "",
+      description: entry.description || "",
+      query: entry.query || ""
+    };
+    
+    if (entry.feedback === "helpful" || entry.feedback === "right") {
+      positive.push(item);
+    } else if (entry.feedback === "wrong") {
+      negative.push(item);
+    }
+  }
+  
+  return { positive, negative };
 }
 
 /**
