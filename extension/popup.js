@@ -11,7 +11,7 @@ const DEFAULTS = {
   enableIntentBoost: true,
   enableTemporalBoost: true,
   // Collector mode defaults
-  collectorMinScore: 70,
+  collectorMinScore: 40,
   collectorMaxVideos: 50
 };
 

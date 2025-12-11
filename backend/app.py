@@ -498,48 +498,88 @@ def match_tags() -> Any:
     response.status_code = 400
     return response
   
-  logging.info(f"Matching {len(videos)} videos against {len(tags)} tags")
-  
-  # Combine all tags into a single semantic profile
-  tags_text = " ".join(tags).lower()
+  logging.info(f"Matching {len(videos)} videos against tags: {tags}")
   
   matches = []
   
   for video in videos:
     try:
       # Combine video text fields
-      video_text = f"{video.get('title', '')} {video.get('description', '')} {video.get('metadata', '')}".lower()
+      title = video.get('title', '')
+      description = video.get('description', '')
+      metadata = video.get('metadata', '')
+      video_text = f"{title} {description} {metadata}".lower()
       
       # Calculate semantic similarity between tags and video
       text_score = 0.0
       image_score = 0.0
+      matched_tags = []
       
       if USE_FALLBACK:
-        # Simple keyword matching for fallback
-        tag_words = set(tags_text.split())
-        video_words = set(video_text.split())
-        common_words = tag_words & video_words
-        text_score = len(common_words) / max(len(tag_words), 1)
+        # Simple keyword matching for fallback - more lenient
+        for tag in tags:
+          tag_lower = tag.lower()
+          if tag_lower in video_text:
+            matched_tags.append(tag)
+            text_score += 0.3  # Each keyword match adds 30%
+        
+        # Cap at 1.0
+        text_score = min(text_score, 1.0)
+        
       else:
         # Use sentence transformers for semantic matching
-        tags_embedding = primary_model.encode(tags_text, convert_to_tensor=True)
-        video_embedding = primary_model.encode(video_text, convert_to_tensor=True)
-        text_similarity = util.pytorch_cos_sim(tags_embedding, video_embedding)
-        text_score = float(text_similarity[0][0])
+        # Check each tag individually for better matching
+        max_tag_score = 0.0
         
-        # Also try image matching if thumbnail available
+        for tag in tags:
+          tag_lower = tag.lower()
+          
+          # Direct keyword match gets highest score
+          if tag_lower in video_text:
+            matched_tags.append(tag)
+            max_tag_score = max(max_tag_score, 0.8)
+          else:
+            # Semantic similarity check
+            try:
+              tag_emb = primary_model.encode(tag_lower, convert_to_tensor=True)
+              video_emb = primary_model.encode(video_text, convert_to_tensor=True)
+              tag_sim = util.pytorch_cos_sim(tag_emb, video_emb)
+              similarity = float(tag_sim[0][0])
+              
+              # Lower threshold for tag matching - 0.25 instead of 0.4
+              if similarity > 0.25:
+                matched_tags.append(tag)
+                max_tag_score = max(max_tag_score, similarity)
+            except Exception as e:
+              logging.debug(f"Error encoding tag {tag}: {e}")
+        
+        text_score = max_tag_score
+        
+        # Also try overall semantic similarity
+        try:
+          tags_text = " ".join(tags).lower()
+          tags_embedding = primary_model.encode(tags_text, convert_to_tensor=True)
+          video_embedding = primary_model.encode(video_text, convert_to_tensor=True)
+          overall_similarity = util.pytorch_cos_sim(tags_embedding, video_embedding)
+          overall_score = float(overall_similarity[0][0])
+          
+          # Use the better of individual tag matching or overall matching
+          text_score = max(text_score, overall_score)
+        except Exception as e:
+          logging.debug(f"Error in overall similarity: {e}")
+        
+        # Try image matching if thumbnail available
         thumbnail_url = video.get('thumbnail', '')
         if thumbnail_url and clip_model and clip_processor:
           try:
             image_embedding = get_image_embedding_cached(thumbnail_url)
             if image_embedding is not None:
-              # Encode tags for CLIP text embedding
+              tags_text = " ".join(tags).lower()
               clip_tags_input = clip_processor(text=[tags_text], return_tensors="pt", padding=True, truncation=True)
               with torch.no_grad():
                 clip_tags_embedding = clip_model.get_text_features(**clip_tags_input)
                 clip_tags_embedding /= clip_tags_embedding.norm(dim=-1, keepdim=True)
               
-              # Calculate cosine similarity
               image_similarity = torch.nn.functional.cosine_similarity(
                 clip_tags_embedding,
                 image_embedding,
@@ -549,31 +589,22 @@ def match_tags() -> Any:
           except Exception as img_err:
             logging.debug(f"Image matching failed: {img_err}")
       
-      # Combine text and image scores
-      combined_score = (text_score * TEXT_WEIGHT) + (image_score * IMAGE_WEIGHT)
+      # Combine text and image scores (prioritize text for tag matching)
+      combined_score = (text_score * 0.7) + (image_score * 0.3)
       
-      # Check which specific tags matched
-      matched_tags = []
-      for tag in tags:
-        tag_lower = tag.lower()
-        if tag_lower in video_text:
-          matched_tags.append(tag)
-        elif not USE_FALLBACK:
-          # Semantic check for tag
-          tag_emb = primary_model.encode(tag_lower, convert_to_tensor=True)
-          tag_sim = util.pytorch_cos_sim(tag_emb, video_embedding)
-          if float(tag_sim[0][0]) > 0.4:  # Tag relevance threshold
-            matched_tags.append(tag)
+      # Log first few for debugging
+      if len(matches) < 3:
+        logging.info(f"Video '{title[:50]}...' - Text: {text_score:.2f}, Image: {image_score:.2f}, Combined: {combined_score:.2f}, Tags: {matched_tags}")
       
       # Only include if score meets minimum
       if combined_score >= min_score:
         matches.append({
           "id": video.get("id"),
-          "title": video.get("title"),
+          "title": title,
           "url": video.get("url"),
           "thumbnail": video.get("thumbnail"),
           "score": round(combined_score * 100, 1),
-          "matchedTags": matched_tags if matched_tags else tags[:3]  # Show first 3 tags if none explicitly matched
+          "matchedTags": matched_tags if matched_tags else tags[:2]  # Show first 2 tags if none explicitly matched
         })
     
     except Exception as e:
@@ -583,7 +614,7 @@ def match_tags() -> Any:
   # Sort by score descending
   matches.sort(key=lambda x: x["score"], reverse=True)
   
-  logging.info(f"Found {len(matches)} videos matching tags (min score: {min_score * 100}%)")
+  logging.info(f"Found {len(matches)} / {len(videos)} videos matching tags (min score: {min_score * 100}%)")
   
   return jsonify({
     "matches": matches,
