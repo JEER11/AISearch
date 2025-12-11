@@ -19,6 +19,16 @@
 					"endsPattern": ".*Press CTRL\\+C.*"
 				}
 			}
+		},
+		{
+			"label": "Start AI Search Backend",
+			"type": "shell",
+			"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+			"args": [
+				"backend\\app.py"
+			],
+			"isBackground": true,
+			"problemMatcher": []
 		}
 	]
 }
