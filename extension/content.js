@@ -259,11 +259,11 @@ function handleRuntimeMessage(message) {
   // Handle collection messages first
   if (message?.type === "start-collection") {
     startVideoCollection(message);
-    return true;
+    return false; // Not async, no response needed
   }
   if (message?.type === "stop-collection") {
     stopVideoCollection();
-    return true;
+    return false; // Not async, no response needed
   }
   
   // Handle existing semantic search messages
@@ -939,6 +939,12 @@ async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
 }
 
 function stopVideoCollection() {
+  // Prevent infinite loop from repeated stop calls
+  if (!collectionState.active) {
+    console.log('[AIS Collection] Already stopped, ignoring');
+    return;
+  }
+  
   console.log('[AIS Collection] Stopping collection');
   console.log('[AIS Collection] Final collected videos:', collectionState.collectedVideos.length);
   
@@ -959,7 +965,7 @@ function stopVideoCollection() {
 
 function startAutoScroll() {
   let scrollAttempts = 0;
-  const maxScrollAttempts = 200; // Increased safety limit
+  const maxScrollAttempts = 500; // Very high limit to scroll through lots of content
   
   collectionState.scrollInterval = setInterval(async () => {
     if (!collectionState.active) {
@@ -981,6 +987,12 @@ function startAutoScroll() {
       return;
     }
     
+    // Scroll FIRST, then collect (so we load new content)
+    window.scrollBy(0, 800);
+    
+    // Wait a bit for content to load
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     // Collect current visible videos
     await collectVisibleVideos();
     
@@ -990,9 +1002,9 @@ function startAutoScroll() {
     if (currentHeight === collectionState.lastScrollHeight) {
       collectionState.noNewContentCount++;
       
-      // If no new content after 8 scrolls (more patient), we've reached the end
-      // Increased from 3 to 8 to give YouTube more time to load content
-      if (collectionState.noNewContentCount >= 8) {
+      // Only stop if we've scrolled 20+ times with no new content
+      // This ensures we scroll through lots of results before giving up
+      if (collectionState.noNewContentCount >= 20) {
         console.log('[AIS Collection] No more content available after', collectionState.noNewContentCount, 'attempts');
         stopVideoCollection();
         return;
@@ -1001,9 +1013,6 @@ function startAutoScroll() {
       collectionState.noNewContentCount = 0;
       collectionState.lastScrollHeight = currentHeight;
     }
-    
-    // Scroll down
-    window.scrollBy(0, 800);
     
     // Update progress
     chrome.runtime.sendMessage({
@@ -1054,9 +1063,16 @@ async function collectVisibleVideos() {
     console.log('[AIS Collection] Sending request to backend...');
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    const timeoutId = setTimeout(() => {
+      console.error('[AIS Collection] Request timed out after 30s');
+      controller.abort();
+    }, 30000); // 30 second timeout
     
-    const response = await fetch(`${collectionState.backendUrl}/match_tags`, {
+    const fetchUrl = `${collectionState.backendUrl}/match_tags`;
+    console.log('[AIS Collection] Fetch URL:', fetchUrl);
+    console.log('[AIS Collection] Request body:', JSON.stringify(requestBody, null, 2));
+    
+    const response = await fetch(fetchUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -1064,7 +1080,7 @@ async function collectVisibleVideos() {
     });
     
     clearTimeout(timeoutId);
-    console.log('[AIS Collection] Response status:', response.status);
+    console.log('[AIS Collection] Response received! Status:', response.status);
     
     if (!response.ok) {
       const errorText = await response.text();

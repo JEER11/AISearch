@@ -504,11 +504,22 @@ def match_tags() -> Any:
   
   for video in videos:
     try:
-      # Combine video text fields
+      # Extract title first (always needed)
       title = video.get('title', '')
-      description = video.get('description', '')
-      metadata = video.get('metadata', '')
-      video_text = f"{title} {description} {metadata}".lower()
+      
+      # Combine video text fields - support both formats
+      if 'text' in video and video['text']:
+        # Frontend sends pre-combined text field
+        video_text = video['text'].lower()
+      else:
+        # Or build from individual fields
+        description = video.get('description', '')
+        metadata = video.get('metadata', '')
+        video_text = f"{title} {description} {metadata}".lower()
+      
+      # Skip if no text
+      if not video_text.strip():
+        continue
       
       # Calculate semantic similarity between tags and video
       text_score = 0.0
@@ -530,6 +541,7 @@ def match_tags() -> Any:
         # Use sentence transformers for semantic matching
         # Check each tag individually for better matching
         max_tag_score = 0.0
+        tag_scores = {}  # Track each tag's score for debugging
         
         for tag in tags:
           tag_lower = tag.lower()
@@ -538,6 +550,7 @@ def match_tags() -> Any:
           if tag_lower in video_text:
             matched_tags.append(tag)
             max_tag_score = max(max_tag_score, 0.8)
+            tag_scores[tag] = 0.8
           else:
             # Semantic similarity check
             try:
@@ -545,13 +558,19 @@ def match_tags() -> Any:
               video_emb = primary_model.encode(video_text, convert_to_tensor=True)
               tag_sim = util.pytorch_cos_sim(tag_emb, video_emb)
               similarity = float(tag_sim[0][0])
+              tag_scores[tag] = similarity
               
-              # Lower threshold for tag matching - 0.25 instead of 0.4
-              if similarity > 0.25:
+              # Lower threshold for tag matching - 0.15 instead of 0.25 (even more lenient)
+              if similarity > 0.15:
                 matched_tags.append(tag)
                 max_tag_score = max(max_tag_score, similarity)
             except Exception as e:
               logging.debug(f"Error encoding tag {tag}: {e}")
+        
+        # Log tag scores for debugging
+        if tag_scores:
+          best_tag = max(tag_scores, key=tag_scores.get)
+          logging.info(f"  Tag scores: {best_tag}={tag_scores[best_tag]:.2f}, all={tag_scores}")
         
         text_score = max_tag_score
         
