@@ -28,6 +28,10 @@ const elements = {
   collectorPanel: document.getElementById("collectorPanel"),
   rerankerPanel: document.getElementById("rerankerPanel"),
   
+  // Advanced toggle
+  advancedToggle: document.getElementById("advancedToggle"),
+  advancedContent: document.getElementById("advancedContent"),
+  
   // Collector elements
   tagChips: document.querySelectorAll(".tag-chip"),
   customTags: document.getElementById("customTags"),
@@ -73,6 +77,9 @@ function init() {
   elements.modeCollector.addEventListener("click", () => switchMode('collector'));
   elements.modeReranker.addEventListener("click", () => switchMode('reranker'));
   
+  // Advanced toggle
+  elements.advancedToggle.addEventListener("click", toggleAdvanced);
+  
   // Tag selection
   elements.tagChips.forEach(chip => {
     chip.addEventListener("click", () => toggleTag(chip));
@@ -109,6 +116,18 @@ function switchMode(mode) {
     elements.modeCollector.classList.remove('active');
     elements.rerankerPanel.style.display = 'block';
     elements.collectorPanel.style.display = 'none';
+  }
+}
+
+function toggleAdvanced() {
+  const isOpen = elements.advancedContent.style.display === 'block';
+  
+  if (isOpen) {
+    elements.advancedContent.style.display = 'none';
+    elements.advancedToggle.classList.remove('open');
+  } else {
+    elements.advancedContent.style.display = 'block';
+    elements.advancedToggle.classList.add('open');
   }
 }
 

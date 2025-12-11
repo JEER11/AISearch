@@ -11,7 +11,7 @@
         <header class="card__header">
           <div>
             <h1>AI Search</h1>
-            <p class="subtitle">Collect videos matching your tags or rerank YouTube results.</p>
+            <p class="subtitle">Tag-based collection or AI reranking</p>
           </div>
           <div class="mode-switch">
             <button type="button" id="modeCollector" class="mode-btn active">Tag Collector</button>
@@ -40,7 +40,7 @@
             <div class="field">
               <label for="customTags">Custom Tags (comma-separated)</label>
               <input type="text" id="customTags" placeholder="e.g., watercolor, origami, baking" />
-              <p class="hint">Add specific tags that match what you're looking for.</p>
+              <p class="hint">Add specific tags matching what you're looking for</p>
             </div>
           </section>
 
@@ -50,12 +50,12 @@
               <label class="field">
                 <span>Min Match Score</span>
                 <input type="number" id="collectorMinScore" min="0" max="100" value="15" step="5" />
-                <p class="hint">Only collect videos scoring above this %</p>
+                <p class="hint">Minimum score threshold (%)</p>
               </label>
               <label class="field">
                 <span>Max Videos</span>
                 <input type="number" id="collectorMaxVideos" min="10" max="200" value="50" step="10" />
-                <p class="hint">Stop after collecting this many matches</p>
+                <p class="hint">Stop after this many matches</p>
               </label>
             </div>
           </section>
@@ -108,7 +108,7 @@
                 <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
                 <button type="button" class="ghost" id="test">Test</button>
               </div>
-            <p class="hint">Point to your Flask endpoint. The test button pings <code>/health</code>.</p>
+            <p class="hint">Flask endpoint (test pings <code>/health</code>)</p>
           </div>
         </section>
 
@@ -118,12 +118,12 @@
             <label class="field">
               <span>Max results to score</span>
               <input type="number" id="maxItems" min="5" max="50" step="1" />
-              <p class="hint">Higher values take longer but cover more of the page.</p>
+              <p class="hint">More = slower but more coverage</p>
             </label>
             <label class="field">
               <span>Minimum match %</span>
               <input type="number" id="minScore" min="0" max="100" step="1" />
-              <p class="hint">Entries below this won't be highlighted.</p>
+              <p class="hint">Below this won't be highlighted</p>
             </label>
             <label class="field">
               <span>Image emphasis</span>
@@ -132,51 +132,60 @@
                 <option value="boosted">Boost visuals</option>
                 <option value="strict">Only strong visuals</option>
               </select>
-              <p class="hint">Tilt scoring toward thumbnails with relevant imagery.</p>
+              <p class="hint">Prioritize thumbnail matching</p>
             </label>
           </div>
         </section>
 
-        <section class="group">
-          <h2>Display</h2>
-          <label class="toggle">
-            <input type="checkbox" id="enableReorder" />
-            <span class="toggle__label">Reorder search results by AI score</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="showBadges" />
-            <span class="toggle__label">Show AI match badges on each result</span>
-          </label>
-        </section>
+        <!-- Advanced Settings (Collapsible) -->
+        <div class="advanced-section">
+          <button type="button" class="advanced-toggle" id="advancedToggle">
+            <span class="advanced-arrow">▶</span>
+            <span>Advanced</span>
+          </button>
+          <div class="advanced-content" id="advancedContent" style="display: none;">
+            <section class="group">
+              <h2>Display</h2>
+              <label class="toggle">
+                <input type="checkbox" id="enableReorder" />
+                <span class="toggle__label">Reorder results by AI score</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="showBadges" />
+                <span class="toggle__label">Show AI match badges</span>
+              </label>
+            </section>
 
-        <section class="group">
-          <h2>Filters</h2>
-          <label class="toggle">
-            <input type="checkbox" id="enableMusicFilter" checked />
-            <span class="toggle__label">Filter music/entertainment content</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="enableBrandFilter" checked />
-            <span class="toggle__label">Filter Apple tech/brand for "apple" queries</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="enableIntentBoost" checked />
-            <span class="toggle__label">Boost content matching query intent</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="enableTemporalBoost" checked />
-            <span class="toggle__label">Boost recent/trending content</span>
-          </label>
-        </section>
+            <section class="group">
+              <h2>Filters</h2>
+              <label class="toggle">
+                <input type="checkbox" id="enableMusicFilter" checked />
+                <span class="toggle__label">Filter music/entertainment</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="enableBrandFilter" checked />
+                <span class="toggle__label">Filter Apple brand (for "apple")</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="enableIntentBoost" checked />
+                <span class="toggle__label">Boost query intent matching</span>
+              </label>
+              <label class="toggle">
+                <input type="checkbox" id="enableTemporalBoost" checked />
+                <span class="toggle__label">Boost recent/trending</span>
+              </label>
+            </section>
 
-          <section class="group">
-            <h2>Feedback Stats</h2>
-            <div id="feedbackStats" class="stats-container">
-              <p class="hint">Loading feedback data...</p>
-            </div>
-            <button type="button" class="ghost" id="refreshStats">Refresh Stats</button>
-            <button type="button" class="ghost" id="clearFeedback">Clear Feedback</button>
-          </section>
+            <section class="group">
+              <h2>Feedback Stats</h2>
+              <div id="feedbackStats" class="stats-container">
+                <p class="hint">Loading feedback data...</p>
+              </div>
+              <button type="button" class="ghost" id="refreshStats">Refresh Stats</button>
+              <button type="button" class="ghost" id="clearFeedback">Clear Feedback</button>
+            </section>
+          </div>
+        </div>
 
           <footer class="actions">
             <button type="button" class="ghost" id="reset">Reset</button>
