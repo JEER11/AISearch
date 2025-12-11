@@ -256,6 +256,17 @@ function observeResults() {
 }
 
 function handleRuntimeMessage(message) {
+  // Handle collection messages first
+  if (message?.type === "start-collection") {
+    startVideoCollection(message);
+    return true;
+  }
+  if (message?.type === "stop-collection") {
+    stopVideoCollection();
+    return true;
+  }
+  
+  // Handle existing semantic search messages
   switch (message?.type) {
     case "semantic-results":
       // Cache the result using payload hash
@@ -1091,20 +1102,5 @@ function extractVideoData(element) {
   } catch (error) {
     console.error('[AIS Collection] Error extracting video data:', error);
     return null;
-  }
-}
-
-// Add collection message handler to existing message listener
-const originalHandleRuntimeMessage = handleRuntimeMessage;
-function handleRuntimeMessage(message, sender, sendResponse) {
-  // Handle collection messages
-  if (message.type === 'start-collection' || message.type === 'stop-collection') {
-    handleCollectionMessage(message);
-    return true;
-  }
-  
-  // Delegate to original handler
-  if (originalHandleRuntimeMessage) {
-    return originalHandleRuntimeMessage(message, sender, sendResponse);
   }
 }
