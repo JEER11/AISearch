@@ -1053,12 +1053,17 @@ async function collectVisibleVideos() {
     
     console.log('[AIS Collection] Sending request to backend...');
     
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
     const response = await fetch(`${collectionState.backendUrl}/match_tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
     });
     
+    clearTimeout(timeoutId);
     console.log('[AIS Collection] Response status:', response.status);
     
     if (!response.ok) {
