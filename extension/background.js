@@ -65,7 +65,7 @@ async function handleSemanticRequest(message, sender) {
 }
 
 async function handleMatchTagsRequest(message, sender) {
-  const { tags, videos, minScore } = message;
+  const { tags, negativeTags, blocklist, videos, minScore } = message;
   
   if (!Array.isArray(tags) || !Array.isArray(videos)) {
     return { error: "Invalid request: tags and videos required" };
@@ -78,7 +78,13 @@ async function handleMatchTagsRequest(message, sender) {
     const response = await fetch(matchTagsUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags, videos, minScore })
+      body: JSON.stringify({ 
+        tags, 
+        negativeTags: negativeTags || [],
+        blocklist: blocklist || [],
+        videos, 
+        minScore 
+      })
     });
 
     if (!response.ok) {

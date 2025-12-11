@@ -166,6 +166,10 @@ async function startCollection() {
   const negativeTagsInput = elements.negativeTags.value.trim();
   const negativeTags = negativeTagsInput ? negativeTagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
   
+  // Get blocklist from feedback
+  const blocklist = await loadBlocklist();
+  console.log('[AIS] Blocklist loaded:', blocklist);
+  
   isCollecting = true;
   collectedVideos = [];
   
@@ -192,6 +196,7 @@ async function startCollection() {
       type: 'start-collection',
       tags: tags,
       negativeTags: negativeTags,
+      blocklist: blocklist,
       minScore: minScore,
       maxVideos: maxVideos,
       backendUrl: elements.backendUrl.value
@@ -261,18 +266,25 @@ function displayCollectedVideos() {
     const thumbsUp = videoItem.querySelector('.thumbs-up');
     const thumbsDown = videoItem.querySelector('.thumbs-down');
     
-    thumbsUp.addEventListener('click', (e) => {
+    thumbsUp.addEventListener('click', async (e) => {
       e.stopPropagation();
       thumbsUp.classList.add('active');
       thumbsDown.classList.remove('active');
-      // Could send feedback to backend here
+      await saveFeedback(video, 'positive');
+      updateStatus('Marked as good match');
     });
     
-    thumbsDown.addEventListener('click', (e) => {
+    thumbsDown.addEventListener('click', async (e) => {
       e.stopPropagation();
       thumbsDown.classList.add('active');
       thumbsUp.classList.remove('active');
-      // Could send feedback to backend here
+      await saveFeedback(video, 'negative');
+      
+      // Remove from display immediately
+      videoItem.style.opacity = '0.3';
+      videoItem.style.pointerEvents = 'none';
+      
+      updateStatus('Video blocked - won\'t appear in future collections');
     });
     
     elements.videoResults.appendChild(videoItem);
@@ -438,6 +450,65 @@ async function testConnection() {
 function updateStatus(text, isError = false) {
   elements.status.textContent = text;
   elements.status.style.color = isError ? "#f87171" : "#9ca3af";
+}
+
+async function saveFeedback(video, type) {
+  const storage = await chrome.storage.local.get(['collection_feedback']);
+  const feedback = storage.collection_feedback || { positive: [], negative: [], blocklist: [] };
+  
+  const feedbackItem = {
+    title: video.title,
+    url: video.url,
+    timestamp: Date.now()
+  };
+  
+  if (type === 'positive') {
+    feedback.positive.push(feedbackItem);
+    // Remove from negative if it was there
+    feedback.negative = feedback.negative.filter(item => item.url !== video.url);
+    feedback.blocklist = feedback.blocklist.filter(pattern => !video.title.includes(pattern));
+  } else if (type === 'negative') {
+    feedback.negative.push(feedbackItem);
+    // Remove from positive if it was there
+    feedback.positive = feedback.positive.filter(item => item.url !== video.url);
+    
+    // Extract creator name if present (e.g., "Jerry Flowers" from "Title | Jerry Flowers")
+    const creatorMatch = video.title.match(/[|\-]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+    if (creatorMatch) {
+      const creatorName = creatorMatch[1].trim();
+      if (!feedback.blocklist.includes(creatorName)) {
+        feedback.blocklist.push(creatorName);
+        console.log('[AIS Feedback] Blocked creator:', creatorName);
+      }
+    }
+    
+    // Also add key terms from title to blocklist
+    const titleWords = video.title.split(/[|\-]/).map(s => s.trim());
+    for (const word of titleWords) {
+      if (word.length > 3 && word.split(' ').length <= 3) {
+        const normalized = word.toLowerCase();
+        // Check if it's likely a person name or series name
+        if (/^[A-Z]/.test(word) && !feedback.blocklist.includes(word)) {
+          feedback.blocklist.push(word);
+          console.log('[AIS Feedback] Blocked pattern:', word);
+        }
+      }
+    }
+  }
+  
+  // Keep only last 100 of each
+  feedback.positive = feedback.positive.slice(-100);
+  feedback.negative = feedback.negative.slice(-100);
+  feedback.blocklist = feedback.blocklist.slice(-50);
+  
+  await chrome.storage.local.set({ collection_feedback: feedback });
+  console.log('[AIS Feedback] Saved:', type, 'Blocklist size:', feedback.blocklist.length);
+}
+
+async function loadBlocklist() {
+  const storage = await chrome.storage.local.get(['collection_feedback']);
+  const feedback = storage.collection_feedback || { blocklist: [] };
+  return feedback.blocklist || [];
 }
 
 async function loadFeedbackStats() {

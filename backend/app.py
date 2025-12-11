@@ -493,6 +493,7 @@ def match_tags() -> Any:
   videos = payload.get("videos", [])
   min_score = payload.get("minScore", 70) / 100.0  # Convert percentage to 0-1
   negative_tags = payload.get("negativeTags", [])  # Get negative tags filter
+  blocklist = payload.get("blocklist", [])  # Get user's blocklist from thumbs down feedback
   
   if not tags or not videos:
     response = jsonify({"error": "Missing tags or videos"})
@@ -502,6 +503,8 @@ def match_tags() -> Any:
   logging.info(f"Matching {len(videos)} videos against tags: {tags}")
   if negative_tags:
     logging.info(f"Filtering out videos containing: {negative_tags}")
+  if blocklist:
+    logging.info(f"Blocklist active ({len(blocklist)} patterns): {blocklist[:5]}...")
   
   matches = []
   
@@ -523,6 +526,18 @@ def match_tags() -> Any:
       # Skip if no text
       if not video_text.strip():
         continue
+      
+      # BLOCKLIST FILTERING: Check against user's thumbs down feedback
+      if blocklist:
+        is_blocked = False
+        for blocked_pattern in blocklist:
+          blocked_lower = blocked_pattern.lower().strip()
+          if blocked_lower and blocked_lower in video_text:
+            logging.debug(f"Skipping blocked video (thumbs down): '{blocked_pattern}' found in {title[:50]}...")
+            is_blocked = True
+            break
+        if is_blocked:
+          continue
       
       # Filter out videos containing negative tags (user-specified exclusions)
       if negative_tags:

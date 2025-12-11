@@ -914,14 +914,18 @@ function handleCollectionMessage(message) {
   }
 }
 
-async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
+async function startVideoCollection({ tags, negativeTags, blocklist, minScore, maxVideos, backendUrl }) {
   console.log('[AIS Collection] Starting collection with tags:', tags);
+  console.log('[AIS Collection] Negative tags:', negativeTags);
+  console.log('[AIS Collection] Blocklist:', blocklist);
   console.log('[AIS Collection] Min score:', minScore, 'Max videos:', maxVideos);
   console.log('[AIS Collection] Backend URL:', backendUrl);
   
   collectionState = {
     active: true,
     tags,
+    negativeTags: negativeTags || [],
+    blocklist: blocklist || [],
     minScore,
     maxVideos,
     collectedVideos: [],
@@ -1053,6 +1057,8 @@ async function collectVisibleVideos() {
     const result = await chrome.runtime.sendMessage({
       type: 'match-tags',
       tags: collectionState.tags,
+      negativeTags: collectionState.negativeTags,
+      blocklist: collectionState.blocklist,
       videos: newVideos,
       minScore: collectionState.minScore
     });
