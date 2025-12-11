@@ -118,8 +118,9 @@ input[type="number"] {
   max-width: 80px;
 }
 
-input[type="text"]#customTags {
-  max-width: 280px;
+input[type="text"]#customTags,
+input[type="text"]#negativeTags {
+  max-width: 180px;
 }
 
 input[type="text"]:focus,
