@@ -1111,7 +1111,7 @@ function extractVideoData(element) {
     if (!videoId) return null;
     
     const thumbnailImg = element.querySelector('img');
-    const thumbnail = extractImageUrl(thumbnailImg) || '';
+    const thumbnail = getThumbnailUrl(element) || '';
     
     const descElement = element.querySelector('#description-text');
     const description = descElement?.textContent?.trim() || '';
