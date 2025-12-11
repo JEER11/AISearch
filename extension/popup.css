@@ -119,8 +119,7 @@ input[type="number"] {
 }
 
 input[type="text"]#customTags {
-  width: 100%;
-  max-width: 100%;
+  max-width: 360px;
 }
 
 input[type="text"]:focus,

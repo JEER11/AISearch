@@ -63,8 +63,8 @@
           <section class="group">
             <div class="collector-controls">
               <button type="button" id="startCollection" class="primary large">
-                <span class="btn-icon">🎯</span>
-                Start Collecting
+                <span class="btn-icon">▶️</span>
+                Start Collecting5
               </button>
               <button type="button" id="stopCollection" class="ghost large" style="display: none;">
                 <span class="btn-icon">⏹️</span>
@@ -95,11 +95,6 @@
 
         <!-- SMART RERANKER MODE -->
         <div id="rerankerPanel" class="mode-panel" style="display: none;">
-          <label class="toggle">
-            <input type="checkbox" id="enabled" />
-            <span class="toggle__label">Enable semantic reranking</span>
-          </label>
-
           <section class="group">
             <h2>Connection</h2>
             <div class="field with-action">
@@ -144,6 +139,14 @@
             <span>Advanced</span>
           </button>
           <div class="advanced-content" id="advancedContent" style="display: none;">
+            <section class="group">
+              <h2>Settings</h2>
+              <label class="toggle">
+                <input type="checkbox" id="enabled" />
+                <span class="toggle__label">Enable semantic reranking</span>
+              </label>
+            </section>
+
             <section class="group">
               <h2>Display</h2>
               <label class="toggle">
