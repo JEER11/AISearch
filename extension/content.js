@@ -916,6 +916,8 @@ function handleCollectionMessage(message) {
 
 async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
   console.log('[AIS Collection] Starting collection with tags:', tags);
+  console.log('[AIS Collection] Min score:', minScore, 'Max videos:', maxVideos);
+  console.log('[AIS Collection] Backend URL:', backendUrl);
   
   collectionState = {
     active: true,
@@ -929,6 +931,8 @@ async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
     noNewContentCount: 0,
     backendUrl: backendUrl.replace('/search', '')
   };
+  
+  console.log('[AIS Collection] State initialized:', collectionState);
   
   // Start the auto-scroll and collection process
   startAutoScroll();
@@ -1025,28 +1029,41 @@ async function collectVisibleVideos() {
   }
   
   if (newVideos.length === 0) {
+    console.log('[AIS Collection] No new videos found in this batch');
     return;
   }
   
   console.log(`[AIS Collection] Found ${newVideos.length} new videos to analyze`);
+  console.log('[AIS Collection] First video:', newVideos[0]);
+  console.log('[AIS Collection] Backend URL:', `${collectionState.backendUrl}/match_tags`);
+  console.log('[AIS Collection] Tags:', collectionState.tags);
+  console.log('[AIS Collection] Min score:', collectionState.minScore);
   
   // Send to backend for tag matching
   try {
+    const requestBody = {
+      tags: collectionState.tags,
+      videos: newVideos,
+      minScore: collectionState.minScore
+    };
+    
+    console.log('[AIS Collection] Sending request to backend...');
+    
     const response = await fetch(`${collectionState.backendUrl}/match_tags`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tags: collectionState.tags,
-        videos: newVideos,
-        minScore: collectionState.minScore
-      })
+      body: JSON.stringify(requestBody)
     });
     
+    console.log('[AIS Collection] Response status:', response.status);
+    
     if (!response.ok) {
-      throw new Error(`Backend returned ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`Backend returned ${response.status}: ${errorText}`);
     }
     
     const result = await response.json();
+    console.log('[AIS Collection] Backend response:', result);
     
     // Add matched videos to collection
     for (const match of result.matches || []) {
@@ -1063,7 +1080,7 @@ async function collectVisibleVideos() {
     chrome.runtime.sendMessage({
       type: 'collection-error',
       error: error.message
-    });
+    }).catch(() => {});
     stopVideoCollection();
   }
 }
