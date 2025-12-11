@@ -959,7 +959,7 @@ function stopVideoCollection() {
 
 function startAutoScroll() {
   let scrollAttempts = 0;
-  const maxScrollAttempts = 100; // Safety limit
+  const maxScrollAttempts = 200; // Increased safety limit
   
   collectionState.scrollInterval = setInterval(async () => {
     if (!collectionState.active) {
@@ -990,9 +990,10 @@ function startAutoScroll() {
     if (currentHeight === collectionState.lastScrollHeight) {
       collectionState.noNewContentCount++;
       
-      // If no new content after 3 scrolls, we've reached the end
-      if (collectionState.noNewContentCount >= 3) {
-        console.log('[AIS Collection] No more content available');
+      // If no new content after 8 scrolls (more patient), we've reached the end
+      // Increased from 3 to 8 to give YouTube more time to load content
+      if (collectionState.noNewContentCount >= 8) {
+        console.log('[AIS Collection] No more content available after', collectionState.noNewContentCount, 'attempts');
         stopVideoCollection();
         return;
       }
