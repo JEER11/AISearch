@@ -91,6 +91,7 @@ h1 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  align-items: start;
 }
 
 label, .field span {
@@ -111,6 +112,15 @@ select {
   color: #f1f5f9;
   font-size: 13px;
   transition: all 0.2s ease;
+}
+
+input[type="number"] {
+  max-width: 80px;
+}
+
+input[type="text"]#customTags {
+  width: 100%;
+  max-width: 100%;
 }
 
 input[type="text"]:focus,
