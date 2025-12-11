@@ -521,6 +521,21 @@ def match_tags() -> Any:
       if not video_text.strip():
         continue
       
+      # Filter out religious/sermon content when searching for nature/creative tags
+      religious_keywords = ['pastor', 'sermon', 'church', 'ministry', 'gospel', 'prayer', 'worship', 'biblical', 'scripture', 'faith', 'blessed', 'preaching']
+      nature_creative_tags = ['art', 'nature', 'gardening', 'creativity', 'crafts', 'diy', 'tutorial']
+      
+      # Check if we're searching for nature/creative content
+      has_nature_creative_tags = any(tag.lower() in nature_creative_tags for tag in tags)
+      
+      # Check if video contains religious keywords
+      has_religious_content = any(keyword in video_text for keyword in religious_keywords)
+      
+      # Skip religious content if we're looking for nature/creative stuff
+      if has_nature_creative_tags and has_religious_content:
+        logging.debug(f"Skipping religious content: {title}")
+        continue
+      
       # Calculate semantic similarity between tags and video
       text_score = 0.0
       image_score = 0.0
