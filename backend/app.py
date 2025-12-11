@@ -536,20 +536,48 @@ def match_tags() -> Any:
         if skip_video:
           continue
       
-      # Filter out religious/sermon content when searching for nature/creative tags
-      religious_keywords = ['pastor', 'sermon', 'church', 'ministry', 'gospel', 'prayer', 'worship', 'biblical', 'scripture', 'faith', 'blessed', 'preaching']
-      nature_creative_tags = ['art', 'nature', 'gardening', 'creativity', 'crafts', 'diy', 'tutorial']
+      # AGGRESSIVE FILTERING: Detect and filter content creators/personalities
+      # Common patterns: "Name | Title", "Title | Name", "Name - Title"
+      # Check if title contains pastor/preacher patterns
+      title_lower = title.lower()
+      is_religious_person = False
+      
+      # Check for religious person indicators in title format
+      religious_person_patterns = [
+        'pastor', 'bishop', 'reverend', 'rev.', 'preacher', 'minister',
+        'apostle', 'prophet', 'evangelist', 'dr.', 'elder'
+      ]
+      
+      # Check for "Jerry Flowers" or similar person names in religious context
+      if '|' in title or '-' in title:
+        title_parts = title.replace('|', ' ').replace('-', ' ').lower()
+        for pattern in religious_person_patterns:
+          if pattern in title_parts:
+            is_religious_person = True
+            break
+      
+      # Also check video text for strong religious indicators
+      religious_keywords = [
+        'pastor', 'sermon', 'church', 'ministry', 'gospel', 'prayer', 
+        'worship', 'biblical', 'scripture', 'faith', 'blessed', 'preaching',
+        'testimony', 'devotional', 'spiritual message', 'word of god'
+      ]
+      
+      nature_creative_tags = ['art', 'nature', 'gardening', 'creativity', 'crafts', 'diy', 'tutorial', 'flower', 'flowers', 'plant', 'plants']
       
       # Check if we're searching for nature/creative content
       has_nature_creative_tags = any(tag.lower() in nature_creative_tags for tag in tags)
       
-      # Check if video contains religious keywords
-      has_religious_content = any(keyword in video_text for keyword in religious_keywords)
+      # Count how many religious keywords are present (threshold approach)
+      religious_keyword_count = sum(1 for keyword in religious_keywords if keyword in video_text)
       
-      # Skip religious content if we're looking for nature/creative stuff
-      if has_nature_creative_tags and has_religious_content:
-        logging.debug(f"Skipping religious content: {title}")
-        continue
+      # Skip if:
+      # 1. Searching for nature/creative AND video is religious content
+      # 2. OR title indicates religious person/speaker
+      if has_nature_creative_tags:
+        if is_religious_person or religious_keyword_count >= 2:
+          logging.debug(f"Skipping religious/person content: {title}")
+          continue
       
       # Calculate semantic similarity between tags and video
       text_score = 0.0
@@ -576,8 +604,37 @@ def match_tags() -> Any:
         for tag in tags:
           tag_lower = tag.lower()
           
-          # Direct keyword match gets highest score
+          # CONTEXT VALIDATION: Check if tag appears in a person's name vs actual content
+          # If searching for "flowers" and title has "Jerry Flowers" but no flower content indicators, penalize
+          is_name_match = False
           if tag_lower in video_text:
+            # Check if this is likely a person name match (appears near person indicators)
+            person_context = ['|', 'by', 'with', 'pastor', 'dr.', 'bishop', 'rev.']
+            text_around_tag = video_text[max(0, video_text.find(tag_lower)-20):min(len(video_text), video_text.find(tag_lower)+len(tag_lower)+20)]
+            
+            if any(indicator in text_around_tag for indicator in person_context):
+              is_name_match = True
+              
+              # Verify actual topic content
+              topic_keywords = {
+                'flower': ['petal', 'bloom', 'bouquet', 'garden', 'rose', 'tulip', 'daisy', 'floral', 'blossom', 'arrangement', 'vase', 'plant'],
+                'flowers': ['petal', 'bloom', 'bouquet', 'garden', 'rose', 'tulip', 'daisy', 'floral', 'blossom', 'arrangement', 'vase', 'plant'],
+                'nature': ['wildlife', 'outdoor', 'forest', 'tree', 'landscape', 'mountain', 'river', 'scenery', 'natural'],
+                'art': ['drawing', 'painting', 'sketch', 'canvas', 'brush', 'color', 'technique', 'artist', 'create'],
+              }
+              
+              # Check if video has actual topic keywords
+              expected_keywords = topic_keywords.get(tag_lower, [])
+              has_topic_content = any(kw in video_text for kw in expected_keywords)
+              
+              if not has_topic_content:
+                # Name match without topic content - significantly penalize
+                logging.debug(f"Name match without content for '{tag}' in: {title[:50]}")
+                tag_scores[tag] = 0.05  # Very low score for name-only matches
+                continue
+          
+          # Direct keyword match gets high score (if not filtered above)
+          if tag_lower in video_text and not is_name_match:
             matched_tags.append(tag)
             max_tag_score = max(max_tag_score, 0.8)
             tag_scores[tag] = 0.8

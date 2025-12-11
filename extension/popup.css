@@ -429,6 +429,7 @@ button.large {
   border-radius: 8px;
   border: 1px solid rgba(71, 85, 105, 0.3);
   transition: all 0.2s ease;
+  align-items: center;
 }
 
 .video-item:hover {
@@ -448,6 +449,52 @@ button.large {
 .video-info {
   flex: 1;
   min-width: 0;
+  cursor: pointer;
+}
+
+.video-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.feedback-btn {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+
+.feedback-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.feedback-btn.thumbs-up:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.feedback-btn.thumbs-down:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.feedback-btn.active.thumbs-up {
+  background: rgba(34, 197, 94, 0.3);
+  border-color: #22c55e;
+  opacity: 1;
+}
+
+.feedback-btn.active.thumbs-down {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: #ef4444;
+  opacity: 1;
 }
 
 .video-title {

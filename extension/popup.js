@@ -245,10 +245,34 @@ function displayCollectedVideos() {
         <div class="video-score">Match: ${video.score}%</div>
         <div class="video-tags">Tags: ${matchingTags}</div>
       </div>
+      <div class="video-actions">
+        <button class="feedback-btn thumbs-up" title="Good match">👍</button>
+        <button class="feedback-btn thumbs-down" title="Bad match">👎</button>
+      </div>
     `;
     
-    videoItem.addEventListener('click', () => {
+    // Click video to open
+    const videoInfo = videoItem.querySelector('.video-info');
+    videoInfo.addEventListener('click', () => {
       window.open(video.url, '_blank');
+    });
+    
+    // Feedback buttons
+    const thumbsUp = videoItem.querySelector('.thumbs-up');
+    const thumbsDown = videoItem.querySelector('.thumbs-down');
+    
+    thumbsUp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      thumbsUp.classList.add('active');
+      thumbsDown.classList.remove('active');
+      // Could send feedback to backend here
+    });
+    
+    thumbsDown.addEventListener('click', (e) => {
+      e.stopPropagation();
+      thumbsDown.classList.add('active');
+      thumbsUp.classList.remove('active');
+      // Could send feedback to backend here
     });
     
     elements.videoResults.appendChild(videoItem);
