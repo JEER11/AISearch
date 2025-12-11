@@ -64,10 +64,42 @@ async function handleSemanticRequest(message, sender) {
   }
 }
 
+async function handleMatchTagsRequest(message, sender) {
+  const { tags, videos, minScore } = message;
+  
+  if (!Array.isArray(tags) || !Array.isArray(videos)) {
+    return { error: "Invalid request: tags and videos required" };
+  }
+
+  const { backendUrl } = await getSettings();
+  const matchTagsUrl = backendUrl.replace('/search', '/match_tags');
+
+  try {
+    const response = await fetch(matchTagsUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags, videos, minScore })
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return { error: `Backend error: ${response.status} ${text}` };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message?.type) {
     case "semantic-score":
       handleSemanticRequest(message, sender);
+      return true;
+    case "match-tags":
+      handleMatchTagsRequest(message, sender).then(sendResponse).catch((error) => sendResponse({ error: error.message }));
       return true;
     case "get-settings":
       getSettings().then(sendResponse).catch((error) => sendResponse({ error: error.message }));

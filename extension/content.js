@@ -1047,47 +1047,20 @@ async function collectVisibleVideos() {
   }
   
   console.log(`[AIS Collection] Found ${newVideos.length} new videos to analyze`);
-  console.log('[AIS Collection] First video:', newVideos[0]);
-  console.log('[AIS Collection] Backend URL:', `${collectionState.backendUrl}/match_tags`);
-  console.log('[AIS Collection] Tags:', collectionState.tags);
-  console.log('[AIS Collection] Min score:', collectionState.minScore);
   
-  // Send to backend for tag matching
+  // Send to backend through background script (avoids CORS issues)
   try {
-    const requestBody = {
+    const result = await chrome.runtime.sendMessage({
+      type: 'match-tags',
       tags: collectionState.tags,
       videos: newVideos,
       minScore: collectionState.minScore
-    };
-    
-    console.log('[AIS Collection] Sending request to backend...');
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      console.error('[AIS Collection] Request timed out after 30s');
-      controller.abort();
-    }, 30000); // 30 second timeout
-    
-    const fetchUrl = `${collectionState.backendUrl}/match_tags`;
-    console.log('[AIS Collection] Fetch URL:', fetchUrl);
-    console.log('[AIS Collection] Request body:', JSON.stringify(requestBody, null, 2));
-    
-    const response = await fetch(fetchUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
     });
     
-    clearTimeout(timeoutId);
-    console.log('[AIS Collection] Response received! Status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Backend returned ${response.status}: ${errorText}`);
+    if (result.error) {
+      throw new Error(result.error);
     }
     
-    const result = await response.json();
     console.log('[AIS Collection] Backend response:', result);
     
     // Add matched videos to collection
@@ -1102,20 +1075,13 @@ async function collectVisibleVideos() {
     
   } catch (error) {
     console.error('[AIS Collection] Error matching videos:', error);
-    console.error('[AIS Collection] Error details:', error.stack);
     
-    // Don't stop on first error - just log and continue
-    // Only stop if it's a critical error (backend not available)
-    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-      console.error('[AIS Collection] Backend connection failed - stopping');
-      chrome.runtime.sendMessage({
-        type: 'collection-error',
-        error: 'Cannot connect to backend. Make sure it is running on http://127.0.0.1:5000'
-      }).catch(() => {});
-      stopVideoCollection();
-    } else {
-      console.warn('[AIS Collection] Non-fatal error, continuing...');
-    }
+    // Stop on connection errors
+    chrome.runtime.sendMessage({
+      type: 'collection-error',
+      error: 'Cannot connect to backend. Make sure it is running on http://127.0.0.1:5000'
+    }).catch(() => {});
+    stopVideoCollection();
   }
 }
 
