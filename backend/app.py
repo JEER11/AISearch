@@ -481,6 +481,117 @@ def health() -> Any:
   return jsonify({"status": "ok", "model": MODEL_NAME})
 
 
+@app.route("/match_tags", methods=["POST", "OPTIONS"])
+def match_tags() -> Any:
+  """Match videos against user-provided tags using semantic similarity."""
+  if request.method == "OPTIONS":
+    preflight = app.make_response(("", 204))
+    return preflight
+  
+  payload = request.get_json(force=True, silent=True) or {}
+  tags = payload.get("tags", [])
+  videos = payload.get("videos", [])
+  min_score = payload.get("minScore", 70) / 100.0  # Convert percentage to 0-1
+  
+  if not tags or not videos:
+    response = jsonify({"error": "Missing tags or videos"})
+    response.status_code = 400
+    return response
+  
+  logging.info(f"Matching {len(videos)} videos against {len(tags)} tags")
+  
+  # Combine all tags into a single semantic profile
+  tags_text = " ".join(tags).lower()
+  
+  matches = []
+  
+  for video in videos:
+    try:
+      # Combine video text fields
+      video_text = f"{video.get('title', '')} {video.get('description', '')} {video.get('metadata', '')}".lower()
+      
+      # Calculate semantic similarity between tags and video
+      text_score = 0.0
+      image_score = 0.0
+      
+      if USE_FALLBACK:
+        # Simple keyword matching for fallback
+        tag_words = set(tags_text.split())
+        video_words = set(video_text.split())
+        common_words = tag_words & video_words
+        text_score = len(common_words) / max(len(tag_words), 1)
+      else:
+        # Use sentence transformers for semantic matching
+        tags_embedding = primary_model.encode(tags_text, convert_to_tensor=True)
+        video_embedding = primary_model.encode(video_text, convert_to_tensor=True)
+        text_similarity = util.pytorch_cos_sim(tags_embedding, video_embedding)
+        text_score = float(text_similarity[0][0])
+        
+        # Also try image matching if thumbnail available
+        thumbnail_url = video.get('thumbnail', '')
+        if thumbnail_url and clip_model and clip_processor:
+          try:
+            image_embedding = get_image_embedding_cached(thumbnail_url)
+            if image_embedding is not None:
+              # Encode tags for CLIP text embedding
+              clip_tags_input = clip_processor(text=[tags_text], return_tensors="pt", padding=True, truncation=True)
+              with torch.no_grad():
+                clip_tags_embedding = clip_model.get_text_features(**clip_tags_input)
+                clip_tags_embedding /= clip_tags_embedding.norm(dim=-1, keepdim=True)
+              
+              # Calculate cosine similarity
+              image_similarity = torch.nn.functional.cosine_similarity(
+                clip_tags_embedding,
+                image_embedding,
+                dim=1
+              )
+              image_score = float(image_similarity[0])
+          except Exception as img_err:
+            logging.debug(f"Image matching failed: {img_err}")
+      
+      # Combine text and image scores
+      combined_score = (text_score * TEXT_WEIGHT) + (image_score * IMAGE_WEIGHT)
+      
+      # Check which specific tags matched
+      matched_tags = []
+      for tag in tags:
+        tag_lower = tag.lower()
+        if tag_lower in video_text:
+          matched_tags.append(tag)
+        elif not USE_FALLBACK:
+          # Semantic check for tag
+          tag_emb = primary_model.encode(tag_lower, convert_to_tensor=True)
+          tag_sim = util.pytorch_cos_sim(tag_emb, video_embedding)
+          if float(tag_sim[0][0]) > 0.4:  # Tag relevance threshold
+            matched_tags.append(tag)
+      
+      # Only include if score meets minimum
+      if combined_score >= min_score:
+        matches.append({
+          "id": video.get("id"),
+          "title": video.get("title"),
+          "url": video.get("url"),
+          "thumbnail": video.get("thumbnail"),
+          "score": round(combined_score * 100, 1),
+          "matchedTags": matched_tags if matched_tags else tags[:3]  # Show first 3 tags if none explicitly matched
+        })
+    
+    except Exception as e:
+      logging.warning(f"Error matching video {video.get('id')}: {e}")
+      continue
+  
+  # Sort by score descending
+  matches.sort(key=lambda x: x["score"], reverse=True)
+  
+  logging.info(f"Found {len(matches)} videos matching tags (min score: {min_score * 100}%)")
+  
+  return jsonify({
+    "matches": matches,
+    "total_analyzed": len(videos),
+    "total_matched": len(matches)
+  })
+
+
 @app.route("/feedback", methods=["POST", "OPTIONS"])
 def feedback() -> Any:
   """Receive user feedback and retrain negative classifier."""

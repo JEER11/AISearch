@@ -9,10 +9,43 @@ const DEFAULTS = {
   enableMusicFilter: true,
   enableBrandFilter: true,
   enableIntentBoost: true,
-  enableTemporalBoost: true
+  enableTemporalBoost: true,
+  // Collector mode defaults
+  collectorMinScore: 70,
+  collectorMaxVideos: 50
 };
 
+// UI Mode State
+let currentMode = 'collector'; // 'collector' or 'reranker'
+let selectedTags = new Set();
+let collectedVideos = [];
+let isCollecting = false;
+
 const elements = {
+  // Mode buttons
+  modeCollector: document.getElementById("modeCollector"),
+  modeReranker: document.getElementById("modeReranker"),
+  collectorPanel: document.getElementById("collectorPanel"),
+  rerankerPanel: document.getElementById("rerankerPanel"),
+  
+  // Collector elements
+  tagChips: document.querySelectorAll(".tag-chip"),
+  customTags: document.getElementById("customTags"),
+  collectorMinScore: document.getElementById("collectorMinScore"),
+  collectorMaxVideos: document.getElementById("collectorMaxVideos"),
+  startCollection: document.getElementById("startCollection"),
+  stopCollection: document.getElementById("stopCollection"),
+  collectionProgress: document.getElementById("collectionProgress"),
+  progressFill: document.getElementById("progressFill"),
+  progressStatus: document.getElementById("progressStatus"),
+  progressCount: document.getElementById("progressCount"),
+  resultsSection: document.getElementById("resultsSection"),
+  videoResults: document.getElementById("videoResults"),
+  copyLinks: document.getElementById("copyLinks"),
+  createPlaylist: document.getElementById("createPlaylist"),
+  clearResults: document.getElementById("clearResults"),
+  
+  // Reranker elements
   enabled: document.getElementById("enabled"),
   backendUrl: document.getElementById("backendUrl"),
   maxItems: document.getElementById("maxItems"),
@@ -36,14 +69,216 @@ const elements = {
 init();
 
 function init() {
+  // Mode switchers
+  elements.modeCollector.addEventListener("click", () => switchMode('collector'));
+  elements.modeReranker.addEventListener("click", () => switchMode('reranker'));
+  
+  // Tag selection
+  elements.tagChips.forEach(chip => {
+    chip.addEventListener("click", () => toggleTag(chip));
+  });
+  
+  // Collector controls
+  elements.startCollection.addEventListener("click", startCollection);
+  elements.stopCollection.addEventListener("click", stopCollection);
+  elements.copyLinks.addEventListener("click", copyAllLinks);
+  elements.createPlaylist.addEventListener("click", createPlaylist);
+  elements.clearResults.addEventListener("click", clearResults);
+  
+  // Reranker controls
   elements.save.addEventListener("click", saveSettings);
   elements.reset.addEventListener("click", resetSettings);
   elements.test.addEventListener("click", testConnection);
   elements.refreshStats.addEventListener("click", loadFeedbackStats);
   elements.clearFeedback.addEventListener("click", clearFeedbackData);
+  
   loadSettings().catch((error) => updateStatus(error.message, true));
   loadFeedbackStats();
 }
+
+function switchMode(mode) {
+  currentMode = mode;
+  
+  if (mode === 'collector') {
+    elements.modeCollector.classList.add('active');
+    elements.modeReranker.classList.remove('active');
+    elements.collectorPanel.style.display = 'block';
+    elements.rerankerPanel.style.display = 'none';
+  } else {
+    elements.modeReranker.classList.add('active');
+    elements.modeCollector.classList.remove('active');
+    elements.rerankerPanel.style.display = 'block';
+    elements.collectorPanel.style.display = 'none';
+  }
+}
+
+function toggleTag(chip) {
+  const tag = chip.dataset.tag;
+  
+  if (selectedTags.has(tag)) {
+    selectedTags.delete(tag);
+    chip.classList.remove('selected');
+  } else {
+    selectedTags.add(tag);
+    chip.classList.add('selected');
+  }
+}
+
+async function startCollection() {
+  // Get all tags (predefined + custom)
+  const tags = Array.from(selectedTags);
+  const customTagsInput = elements.customTags.value.trim();
+  if (customTagsInput) {
+    const customTagsList = customTagsInput.split(',').map(t => t.trim()).filter(t => t);
+    tags.push(...customTagsList);
+  }
+  
+  if (tags.length === 0) {
+    updateStatus('Please select or enter at least one tag', true);
+    return;
+  }
+  
+  const minScore = parseInt(elements.collectorMinScore.value);
+  const maxVideos = parseInt(elements.collectorMaxVideos.value);
+  
+  isCollecting = true;
+  collectedVideos = [];
+  
+  // Update UI
+  elements.startCollection.style.display = 'none';
+  elements.stopCollection.style.display = 'block';
+  elements.collectionProgress.style.display = 'block';
+  elements.resultsSection.style.display = 'none';
+  elements.videoResults.innerHTML = '';
+  
+  updateProgress(0, maxVideos, 'Starting collection...');
+  
+  // Send message to active tab to start collecting
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  
+  if (!tab || !tab.url.includes('youtube.com')) {
+    updateStatus('Please open a YouTube search results page', true);
+    stopCollection();
+    return;
+  }
+  
+  try {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'start-collection',
+      tags: tags,
+      minScore: minScore,
+      maxVideos: maxVideos,
+      backendUrl: elements.backendUrl.value
+    });
+  } catch (error) {
+    updateStatus('Error: ' + error.message, true);
+    stopCollection();
+  }
+}
+
+function stopCollection() {
+  isCollecting = false;
+  elements.startCollection.style.display = 'block';
+  elements.stopCollection.style.display = 'none';
+  elements.collectionProgress.style.display = 'none';
+  
+  // Notify content script to stop
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (tab) {
+      chrome.tabs.sendMessage(tab.id, { type: 'stop-collection' }).catch(() => {});
+    }
+  });
+}
+
+function updateProgress(current, max, status) {
+  const percentage = (current / max) * 100;
+  elements.progressFill.style.width = percentage + '%';
+  elements.progressStatus.textContent = status;
+  elements.progressCount.textContent = `${current} / ${max} videos found`;
+}
+
+function displayCollectedVideos() {
+  if (collectedVideos.length === 0) {
+    updateStatus('No videos matched your tags', true);
+    return;
+  }
+  
+  elements.resultsSection.style.display = 'block';
+  elements.videoResults.innerHTML = '';
+  
+  collectedVideos.forEach(video => {
+    const videoItem = document.createElement('div');
+    videoItem.className = 'video-item';
+    
+    const matchingTags = video.matchedTags.join(', ');
+    
+    videoItem.innerHTML = `
+      <img src="${video.thumbnail}" alt="${video.title}" class="video-thumb" />
+      <div class="video-info">
+        <h3 class="video-title">${video.title}</h3>
+        <div class="video-score">Match: ${video.score}%</div>
+        <div class="video-tags">Tags: ${matchingTags}</div>
+      </div>
+    `;
+    
+    videoItem.addEventListener('click', () => {
+      window.open(video.url, '_blank');
+    });
+    
+    elements.videoResults.appendChild(videoItem);
+  });
+  
+  updateStatus(`Found ${collectedVideos.length} matching videos!`);
+}
+
+function copyAllLinks() {
+  const links = collectedVideos.map(v => v.url).join('\n');
+  navigator.clipboard.writeText(links).then(() => {
+    updateStatus('All links copied to clipboard!');
+  });
+}
+
+function createPlaylist() {
+  // Generate YouTube playlist creation URL with all video IDs
+  const videoIds = collectedVideos.map(v => {
+    const match = v.url.match(/[?&]v=([^&]+)/);
+    return match ? match[1] : null;
+  }).filter(id => id);
+  
+  if (videoIds.length === 0) {
+    updateStatus('No valid video IDs found', true);
+    return;
+  }
+  
+  // YouTube doesn't have a direct "create playlist" URL, so we'll copy the IDs
+  const playlistText = `YouTube Video IDs (paste these into a new playlist):\n\n${videoIds.join('\n')}`;
+  navigator.clipboard.writeText(playlistText).then(() => {
+    updateStatus('Video IDs copied! Create a playlist and add these videos.');
+    window.open('https://www.youtube.com/playlist?list=WL', '_blank'); // Opens "Watch Later" as example
+  });
+}
+
+function clearResults() {
+  collectedVideos = [];
+  elements.videoResults.innerHTML = '';
+  elements.resultsSection.style.display = 'none';
+  updateStatus('Results cleared');
+}
+
+// Listen for messages from content script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'collection-progress') {
+    updateProgress(message.current, message.max, message.status);
+    collectedVideos = message.videos || collectedVideos;
+  } else if (message.type === 'collection-complete') {
+    collectedVideos = message.videos;
+    stopCollection();
+    displayCollectedVideos();
+  } else if (message.type === 'collection-error') {
+    updateStatus('Collection error: ' + message.error, true);
+    stopCollection();
+  }
+});
 
 async function loadSettings() {
   updateStatus("Loading settings...");

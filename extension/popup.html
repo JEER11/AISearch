@@ -11,22 +11,103 @@
         <header class="card__header">
           <div>
             <h1>AI Search</h1>
-            <p class="subtitle">Fine-tune how semantic reranking behaves on YouTube results.</p>
+            <p class="subtitle">Collect videos matching your tags or rerank YouTube results.</p>
           </div>
+          <div class="mode-switch">
+            <button type="button" id="modeCollector" class="mode-btn active">Tag Collector</button>
+            <button type="button" id="modeReranker" class="mode-btn">Smart Reranker</button>
+          </div>
+        </header>
+
+        <!-- TAG COLLECTOR MODE -->
+        <div id="collectorPanel" class="mode-panel">
+          <section class="group">
+            <h2>Select Tags</h2>
+            <div class="tags-container">
+              <button type="button" class="tag-chip" data-tag="Food">🍳 Food</button>
+              <button type="button" class="tag-chip" data-tag="Creativity">🎨 Creativity</button>
+              <button type="button" class="tag-chip" data-tag="DIY">🔨 DIY</button>
+              <button type="button" class="tag-chip" data-tag="Art">🖼️ Art</button>
+              <button type="button" class="tag-chip" data-tag="Tutorial">📚 Tutorial</button>
+              <button type="button" class="tag-chip" data-tag="Crafts">✂️ Crafts</button>
+              <button type="button" class="tag-chip" data-tag="Education">🎓 Education</button>
+              <button type="button" class="tag-chip" data-tag="Music">🎵 Music</button>
+              <button type="button" class="tag-chip" data-tag="Gaming">🎮 Gaming</button>
+              <button type="button" class="tag-chip" data-tag="Technology">💻 Technology</button>
+              <button type="button" class="tag-chip" data-tag="Nature">🌿 Nature</button>
+              <button type="button" class="tag-chip" data-tag="Gardening">🌱 Gardening</button>
+            </div>
+            <div class="field">
+              <label for="customTags">Custom Tags (comma-separated)</label>
+              <input type="text" id="customTags" placeholder="e.g., watercolor, origami, baking" />
+              <p class="hint">Add specific tags that match what you're looking for.</p>
+            </div>
+          </section>
+
+          <section class="group">
+            <h2>Collection Settings</h2>
+            <div class="field-grid">
+              <label class="field">
+                <span>Min Match Score</span>
+                <input type="number" id="collectorMinScore" min="0" max="100" value="70" step="5" />
+                <p class="hint">Only collect videos scoring above this %</p>
+              </label>
+              <label class="field">
+                <span>Max Videos</span>
+                <input type="number" id="collectorMaxVideos" min="10" max="200" value="50" step="10" />
+                <p class="hint">Stop after collecting this many matches</p>
+              </label>
+            </div>
+          </section>
+
+          <section class="group">
+            <div class="collector-controls">
+              <button type="button" id="startCollection" class="primary large">
+                <span class="btn-icon">🎯</span>
+                Start Collecting
+              </button>
+              <button type="button" id="stopCollection" class="ghost large" style="display: none;">
+                <span class="btn-icon">⏹️</span>
+                Stop Collection
+              </button>
+            </div>
+            <div id="collectionProgress" style="display: none;">
+              <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+              </div>
+              <p class="progress-text">
+                <span id="progressStatus">Scrolling and analyzing...</span>
+                <span id="progressCount">0 / 50 videos found</span>
+              </p>
+            </div>
+          </section>
+
+          <section class="group" id="resultsSection" style="display: none;">
+            <h2>Collected Videos</h2>
+            <div id="videoResults" class="video-list"></div>
+            <div class="actions">
+              <button type="button" id="copyLinks" class="primary">📋 Copy All Links</button>
+              <button type="button" id="createPlaylist" class="primary">📺 Create Playlist</button>
+              <button type="button" id="clearResults" class="ghost">🗑️ Clear Results</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- SMART RERANKER MODE -->
+        <div id="rerankerPanel" class="mode-panel" style="display: none;">
           <label class="toggle">
             <input type="checkbox" id="enabled" />
             <span class="toggle__label">Enable semantic reranking</span>
           </label>
-        </header>
 
-        <section class="group">
-          <h2>Connection</h2>
-          <div class="field with-action">
-            <label for="backendUrl">Backend URL</label>
-            <div class="field__row">
-              <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
-              <button type="button" class="ghost" id="test">Test</button>
-            </div>
+          <section class="group">
+            <h2>Connection</h2>
+            <div class="field with-action">
+              <label for="backendUrl">Backend URL</label>
+              <div class="field__row">
+                <input type="url" id="backendUrl" placeholder="http://127.0.0.1:5000/search" />
+                <button type="button" class="ghost" id="test">Test</button>
+              </div>
             <p class="hint">Point to your Flask endpoint. The test button pings <code>/health</code>.</p>
           </div>
         </section>
@@ -88,19 +169,22 @@
           </label>
         </section>
 
-        <section class="group">
-          <h2>Feedback Stats</h2>
-          <div id="feedbackStats" class="stats-container">
-            <p class="hint">Loading feedback data...</p>
-          </div>
-          <button type="button" class="ghost" id="refreshStats">Refresh Stats</button>
-          <button type="button" class="ghost" id="clearFeedback">Clear Feedback</button>
-        </section>
+          <section class="group">
+            <h2>Feedback Stats</h2>
+            <div id="feedbackStats" class="stats-container">
+              <p class="hint">Loading feedback data...</p>
+            </div>
+            <button type="button" class="ghost" id="refreshStats">Refresh Stats</button>
+            <button type="button" class="ghost" id="clearFeedback">Clear Feedback</button>
+          </section>
 
-        <footer class="actions">
-          <button type="button" class="ghost" id="reset">Reset</button>
-          <button type="button" id="save">Save</button>
-        </footer>
+          <footer class="actions">
+            <button type="button" class="ghost" id="reset">Reset</button>
+            <button type="button" id="save">Save</button>
+          </footer>
+        </div>
+        <!-- End Reranker Panel -->
+
         <p id="status" role="status"></p>
       </section>
     </main>

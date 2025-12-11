@@ -877,3 +877,234 @@ function clamp(value, min, max, fallback) {
   }
   return Math.min(Math.max(value, min), max);
 }
+
+// ========================================
+// TAG-BASED VIDEO COLLECTION FUNCTIONALITY
+// ========================================
+
+let collectionState = {
+  active: false,
+  tags: [],
+  minScore: 70,
+  maxVideos: 50,
+  collectedVideos: [],
+  processedIds: new Set(),
+  scrollInterval: null,
+  lastScrollHeight: 0,
+  noNewContentCount: 0,
+  backendUrl: ''
+};
+
+function handleCollectionMessage(message) {
+  if (message.type === 'start-collection') {
+    startVideoCollection(message);
+  } else if (message.type === 'stop-collection') {
+    stopVideoCollection();
+  }
+}
+
+async function startVideoCollection({ tags, minScore, maxVideos, backendUrl }) {
+  console.log('[AIS Collection] Starting collection with tags:', tags);
+  
+  collectionState = {
+    active: true,
+    tags,
+    minScore,
+    maxVideos,
+    collectedVideos: [],
+    processedIds: new Set(),
+    scrollInterval: null,
+    lastScrollHeight: 0,
+    noNewContentCount: 0,
+    backendUrl: backendUrl.replace('/search', '')
+  };
+  
+  // Start the auto-scroll and collection process
+  startAutoScroll();
+}
+
+function stopVideoCollection() {
+  console.log('[AIS Collection] Stopping collection');
+  
+  if (collectionState.scrollInterval) {
+    clearInterval(collectionState.scrollInterval);
+  }
+  
+  collectionState.active = false;
+  
+  // Send final results
+  chrome.runtime.sendMessage({
+    type: 'collection-complete',
+    videos: collectionState.collectedVideos
+  });
+}
+
+function startAutoScroll() {
+  let scrollAttempts = 0;
+  const maxScrollAttempts = 100; // Safety limit
+  
+  collectionState.scrollInterval = setInterval(async () => {
+    if (!collectionState.active) {
+      clearInterval(collectionState.scrollInterval);
+      return;
+    }
+    
+    // Check if we've collected enough
+    if (collectionState.collectedVideos.length >= collectionState.maxVideos) {
+      console.log('[AIS Collection] Max videos reached');
+      stopVideoCollection();
+      return;
+    }
+    
+    // Check for safety limit
+    if (scrollAttempts++ > maxScrollAttempts) {
+      console.log('[AIS Collection] Max scroll attempts reached');
+      stopVideoCollection();
+      return;
+    }
+    
+    // Collect current visible videos
+    await collectVisibleVideos();
+    
+    // Check if page has new content
+    const currentHeight = document.documentElement.scrollHeight;
+    
+    if (currentHeight === collectionState.lastScrollHeight) {
+      collectionState.noNewContentCount++;
+      
+      // If no new content after 3 scrolls, we've reached the end
+      if (collectionState.noNewContentCount >= 3) {
+        console.log('[AIS Collection] No more content available');
+        stopVideoCollection();
+        return;
+      }
+    } else {
+      collectionState.noNewContentCount = 0;
+      collectionState.lastScrollHeight = currentHeight;
+    }
+    
+    // Scroll down
+    window.scrollBy(0, 800);
+    
+    // Update progress
+    chrome.runtime.sendMessage({
+      type: 'collection-progress',
+      current: collectionState.collectedVideos.length,
+      max: collectionState.maxVideos,
+      status: 'Scrolling and analyzing...',
+      videos: collectionState.collectedVideos
+    });
+    
+  }, 2000); // Scroll every 2 seconds to give time for videos to load
+}
+
+async function collectVisibleVideos() {
+  const videoElements = Array.from(document.querySelectorAll(RESULT_SELECTOR));
+  const newVideos = [];
+  
+  for (const element of videoElements) {
+    // Extract video data
+    const videoData = extractVideoData(element);
+    if (!videoData || collectionState.processedIds.has(videoData.id)) {
+      continue;
+    }
+    
+    collectionState.processedIds.add(videoData.id);
+    newVideos.push(videoData);
+  }
+  
+  if (newVideos.length === 0) {
+    return;
+  }
+  
+  console.log(`[AIS Collection] Found ${newVideos.length} new videos to analyze`);
+  
+  // Send to backend for tag matching
+  try {
+    const response = await fetch(`${collectionState.backendUrl}/match_tags`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tags: collectionState.tags,
+        videos: newVideos,
+        minScore: collectionState.minScore
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Backend returned ${response.status}`);
+    }
+    
+    const result = await response.json();
+    
+    // Add matched videos to collection
+    for (const match of result.matches || []) {
+      if (collectionState.collectedVideos.length >= collectionState.maxVideos) {
+        break;
+      }
+      collectionState.collectedVideos.push(match);
+    }
+    
+    console.log(`[AIS Collection] Collected ${result.matches?.length || 0} matching videos (total: ${collectionState.collectedVideos.length})`);
+    
+  } catch (error) {
+    console.error('[AIS Collection] Error matching videos:', error);
+    chrome.runtime.sendMessage({
+      type: 'collection-error',
+      error: error.message
+    });
+    stopVideoCollection();
+  }
+}
+
+function extractVideoData(element) {
+  try {
+    const titleElement = element.querySelector('#video-title');
+    const title = titleElement?.textContent?.trim();
+    
+    if (!title) return null;
+    
+    const linkElement = element.querySelector('a#thumbnail');
+    const url = linkElement?.href;
+    const videoId = url?.match(/[?&]v=([^&]+)/)?.[1];
+    
+    if (!videoId) return null;
+    
+    const thumbnailImg = element.querySelector('img');
+    const thumbnail = extractImageUrl(thumbnailImg) || '';
+    
+    const descElement = element.querySelector('#description-text');
+    const description = descElement?.textContent?.trim() || '';
+    
+    const metaElement = element.querySelector('#metadata-line span');
+    const metadata = metaElement?.textContent?.trim() || '';
+    
+    return {
+      id: videoId,
+      title,
+      url,
+      thumbnail,
+      description,
+      metadata,
+      text: `${title} ${description} ${metadata}`.toLowerCase()
+    };
+  } catch (error) {
+    console.error('[AIS Collection] Error extracting video data:', error);
+    return null;
+  }
+}
+
+// Add collection message handler to existing message listener
+const originalHandleRuntimeMessage = handleRuntimeMessage;
+function handleRuntimeMessage(message, sender, sendResponse) {
+  // Handle collection messages
+  if (message.type === 'start-collection' || message.type === 'stop-collection') {
+    handleCollectionMessage(message);
+    return true;
+  }
+  
+  // Delegate to original handler
+  if (originalHandleRuntimeMessage) {
+    return originalHandleRuntimeMessage(message, sender, sendResponse);
+  }
+}
