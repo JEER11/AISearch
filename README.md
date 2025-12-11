@@ -54,7 +54,7 @@ A Chrome extension that uses AI to improve YouTube search results with two power
 ### Step 3: Use the Extension
 
 **For Smart Reranker Mode:**
-1. Go to YouTube and search for anything (e.g., "apple recipes")
+1. Go to YouTube and search for anything (e.g., "apple")
 2. Click the extension icon in your browser toolbar
 3. Click **"Smart Reranker"** mode
 4. Click **"Save"** to enable
@@ -107,7 +107,7 @@ A Chrome extension that uses AI to improve YouTube search results with two power
 ## How It Works
 
 The backend uses AI models (SentenceTransformers + CLIP) to understand the meaning of your search and video content, not just keywords. This means:
-- Searching "apple recipes" shows cooking videos, not iPhone reviews
+- Searching "apple" shows cooking videos, not iPhone reviews
 - Videos are ranked by actual relevance, not just view count
 - Thumbnails are checked to match visual expectations
 
