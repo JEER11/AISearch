@@ -118,10 +118,6 @@ input[type="number"] {
   max-width: 80px;
 }
 
-input[type="text"]#customTags {
-  max-width: 360px;
-}
-
 input[type="text"]:focus,
 input[type="url"]:focus,
 input[type="number"]:focus,
