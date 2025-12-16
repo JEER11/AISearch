@@ -124,3 +124,10 @@ The backend uses AI models (SentenceTransformers + CLIP) to understand the meani
 │   └── popup.html    # Extension settings UI
 └── README.md
 ```
+
+## Team members
+
+- Jennifer Corte
+- Eishah Shah
+- Jeraldine Rodriguez 
+
